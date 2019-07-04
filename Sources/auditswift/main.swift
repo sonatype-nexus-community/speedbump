@@ -18,7 +18,8 @@ func printLogo() {
     }
     else {    
         print("AuditSwift")
-    }  
+    }
+    print("\n")  
 }
 
 func parseCli() -> String{
@@ -77,7 +78,7 @@ func getLockFiles(dir: String) -> [String]
     
 }
 
-func getPackages(file: String) -> Packages
+func getSPMPackages(file: String) -> Packages
 {
     let jsonDecoder = JSONDecoder()
     do
@@ -90,7 +91,34 @@ func getPackages(file: String) -> Packages
         exit(1)
     }
 }
+
+
 printLogo()
-let lockFiles = getLockFiles(dir: parseCli())
-let p = getPackages(file: lockFiles[0])
-print(p)
+let d = parseCli()
+let lockFiles = getLockFiles(dir: d)
+
+if lockFiles.count == 0 {
+    print ("Did not find any package manager files in directory \(d)".red())
+    exit(1)
+}
+for f in lockFiles {
+    if f.hasSuffix("Package.resolved") {
+        print("Using Swift Package Manager file \(f).".green())
+        let p = getSPMPackages(file: f)
+        print("Parsed \(p.object!.pins!.count) packages from \(f).")
+        var coords = [String]()
+        for pin in p.object!.pins!
+        {
+            coords.append("pkg:gem/\(pin.package!)@\(pin.package!)\(pin.state!.version!)")
+        }
+        let coordinates = ["coordinates": coords]
+        print(coordinates)
+        let json = String(data: try! JSONSerialization.data(withJSONObject: coordinates), encoding: .utf8)!
+        print(json)
+    }
+    else {
+        print("auditswift doesn't currently support package manager file \(f).".red())
+    }
+}
+
+
