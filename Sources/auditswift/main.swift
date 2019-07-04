@@ -21,7 +21,7 @@ func printLogo() {
     }  
 }
 
-func parseCli() {
+func parseCli() -> String{
     let cli = CommandLine()
     cli.formatOutput = { s, type in
         var str: String
@@ -44,12 +44,53 @@ func parseCli() {
     
     do {
         try cli.parse()
+        return dirPath.value!
     } 
     catch {
         print("Audit a Swift package's dependencies for security vulnerabilities.\n")
         cli.printUsage(error)
+        exit(1)
+    }
+}
+
+func getLockFiles(dir: String) -> [String]
+{
+    
+    do {
+        if !FileManager.default.fileExists(atPath: dir) {
+            print ("The directory \(dir) does not exist.".red())
+            exit(1)
+        }
+        var lockFiles = [String]()
+        let fileURLs = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)
+        for file in fileURLs {
+            if file.pathExtension == "resolved" {
+                lockFiles.append(file.path)
+            }
+        }
+        return lockFiles
+    }
+    catch {
+        print ("Error enumerating files in directory \(dir).".red())
+        exit(1)
+    }
+    
+}
+
+func getPackages(file: String) -> Packages
+{
+    let jsonDecoder = JSONDecoder()
+    do
+    {
+	    return try jsonDecoder.decode(Packages.self, 
+            from: Data(contentsOf: URL(fileURLWithPath: file)))
+    }
+    catch {
+        print ("Error reading JSON from file \(file).".red())
+        exit(1)
     }
 }
 printLogo()
-parseCli()
-
+let lockFiles = getLockFiles(dir: parseCli())
+let p = getPackages(file: lockFiles[0])
+print(p)

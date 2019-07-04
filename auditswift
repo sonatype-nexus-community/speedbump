@@ -1,2 +1,2 @@
 #!/bin/bash
-.build/debug/auditswift
+.build/debug/auditswift "$@"
