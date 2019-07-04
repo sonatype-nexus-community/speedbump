@@ -1,6 +1,9 @@
 import Foundation
 import CommandLineKit
 import ColorizeSwift
+import Progress
+
+let spinner = Spinner(pattern: .dots)
 
 func printLogo() {
     let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "AuditSwift")
@@ -19,7 +22,6 @@ func printLogo() {
     else {    
         print("AuditSwift")
     }
-    print("\n")  
 }
 
 func parseCli() -> String{
@@ -56,7 +58,7 @@ func parseCli() -> String{
 
 func getLockFiles(dir: String) -> [String]
 {
-    
+    spinner.start()
     do {
         if !FileManager.default.fileExists(atPath: dir) {
             print ("The directory \(dir) does not exist.".red())
@@ -69,9 +71,11 @@ func getLockFiles(dir: String) -> [String]
                 lockFiles.append(file.path)
             }
         }
+        spinner.succeed(text: "Found \(lockFiles.count) package manager file(s).")
         return lockFiles
     }
     catch {
+        spinner.stop()
         print ("Error enumerating files in directory \(dir).".red())
         exit(1)
     }
@@ -92,9 +96,11 @@ func getSPMPackages(file: String) -> Packages
     }
 }
 
+let ossindex = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
 
 printLogo()
 let d = parseCli()
+
 let lockFiles = getLockFiles(dir: d)
 
 if lockFiles.count == 0 {
@@ -103,18 +109,52 @@ if lockFiles.count == 0 {
 }
 for f in lockFiles {
     if f.hasSuffix("Package.resolved") {
-        print("Using Swift Package Manager file \(f).".green())
+        print("Using Swift Package Manager file \(f)...".green())
+        spinner.start()
         let p = getSPMPackages(file: f)
-        print("Parsed \(p.object!.pins!.count) packages from \(f).")
         var coords = [String]()
         for pin in p.object!.pins!
         {
             coords.append("pkg:gem/\(pin.package!)@\(pin.package!)\(pin.state!.version!)")
         }
         let coordinates = ["coordinates": coords]
-        print(coordinates)
-        let json = String(data: try! JSONSerialization.data(withJSONObject: coordinates), encoding: .utf8)!
-        print(json)
+        spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
+        print("Querying OSSIndex API...".green())
+        spinner.start()
+        let json = try! JSONSerialization.data(withJSONObject: coordinates)
+        var request = URLRequest(url: ossindex)
+        request.httpMethod = "POST"
+        request.httpBody = json
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
+        let session = URLSession.shared
+        let task = session.dataTask(with: request) {
+            (data, response, error) in
+            guard error == nil else {
+                spinner.stop()
+                print("error making POST request on \(ossindex)".red())
+                print(error!)
+                exit(1)
+                
+            }
+            guard let responseData = data else {
+                spinner.stop()
+                print("Error: did not receive data".red())
+                exit(1)
+            }
+            let response = String(data: responseData, encoding: .utf8)!
+            if !response.hasPrefix("[{\"coordinates\"")
+            {
+                spinner.stop()
+                print("Error: did not receive coordinate data".red())
+                exit(1)
+            }
+            spinner.succeed(text: "Received \(responseData) from server.")
+            print(response)
+        }
+        task.resume()
+        while task.state == .running {}
+
     }
     else {
         print("auditswift doesn't currently support package manager file \(f).".red())
