@@ -8,7 +8,8 @@ let package = Package(
     dependencies: [
         // Dependencies declare other packages that this package depends on.
         // .package(url: /* package url */, from: "1.0.0"),
-        .package(url: "https://github.com/nsomar/Guaka.git", from:"0.4.1"),
+        //.package(url: "https://github.com/nsomar/Guaka.git", from:"0.4.1"),
+        .package(url: "https://github.com/jatoben/CommandLine", from: "3.0.0-pre1"),
         .package(url: "https://github.com/mtynior/ColorizeSwift.git", from: "1.2.0"),
     ],
     targets: [
@@ -16,7 +17,7 @@ let package = Package(
         // Targets can depend on other targets in this package, and on products in packages which this package depends on.
         .target(
             name: "auditswift",
-            dependencies: ["ColorizeSwift"]),
+            dependencies: ["CommandLine", "ColorizeSwift"]),
         .testTarget(
             name: "auditswiftTests",
             dependencies: ["auditswift"]),

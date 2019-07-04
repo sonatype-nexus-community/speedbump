@@ -11,21 +11,12 @@
         }
       },
       {
-        "package": "Guaka",
-        "repositoryURL": "https://github.com/nsomar/Guaka.git",
+        "package": "CommandLine",
+        "repositoryURL": "https://github.com/jatoben/CommandLine",
         "state": {
           "branch": null,
-          "revision": "6fb29b2378166a30d72120980e1c099c664598de",
-          "version": "0.4.1"
-        }
-      },
-      {
-        "package": "StringScanner",
-        "repositoryURL": "https://github.com/getGuaka/StringScanner.git",
-        "state": {
-          "branch": null,
-          "revision": "de1685ad202cb586d626ed52d6de904dd34189f3",
-          "version": "0.4.1"
+          "revision": "73048b666be97d122109276a1b8a69ec407cdb13",
+          "version": "3.0.0-pre1"
         }
       }
     ]
