@@ -22,6 +22,7 @@ func printLogo() {
     else {    
         print("AuditSwift")
     }
+    print ("v0.1.0\n")
 }
 
 func parseCli() -> String{
@@ -96,6 +97,18 @@ func getSPMPackages(file: String) -> Packages
     }
 }
 
+func printResults(results: [Result])
+{
+    print("\nAudit Results")
+    print ("=============\n")
+    for result in results
+    {
+        let c = result.coordinates!.components(separatedBy: "/")
+        let p = c[1].components(separatedBy: "@")
+        let d = result.description ?? ""
+        print ("Package: \(p[0])\nVersion: \(p[1])\nDescription: \(d)\n") 
+    }
+}
 let ossindex = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
 
 printLogo()
@@ -115,7 +128,7 @@ for f in lockFiles {
         var coords = [String]()
         for pin in p.object!.pins!
         {
-            coords.append("pkg:gem/\(pin.package!)@\(pin.package!)\(pin.state!.version!)")
+            coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
         }
         let coordinates = ["coordinates": coords]
         spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
@@ -127,6 +140,8 @@ for f in lockFiles {
         request.httpBody = json
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
+        var apiData = Data()
+        var apiResponse = ""
         let session = URLSession.shared
         let task = session.dataTask(with: request) {
             (data, response, error) in
@@ -150,11 +165,23 @@ for f in lockFiles {
                 exit(1)
             }
             spinner.succeed(text: "Received \(responseData) from server.")
-            print(response)
+            //print(response)
+            apiResponse = response
+            apiData = responseData
         }
         task.resume()
         while task.state == .running {}
-
+        let jsonDecoder = JSONDecoder()
+        do
+        {
+	        let results = try jsonDecoder.decode([Result].self, from: apiData)
+            printResults(results: results)
+        }
+        catch {
+            print ("Error decoding JSON \(apiResponse).".red())
+            exit(1)
+        }
+    
     }
     else {
         print("auditswift doesn't currently support package manager file \(f).".red())
