@@ -1,6 +1,6 @@
 import Foundation
 import CommandLineKit
-import ColorizeSwift
+import Rainbow
 import Progress
 
 let spinner = Spinner(pattern: .dots)
@@ -117,7 +117,7 @@ let d = parseCli()
 let lockFiles = getLockFiles(dir: d)
 
 if lockFiles.count == 0 {
-    print ("Did not find any package manager files in directory \(d)".red())
+    print ("Did not find any package manager dependency lock files in directory \(d)".red())
     exit(1)
 }
 for f in lockFiles {
