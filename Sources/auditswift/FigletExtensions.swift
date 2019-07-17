@@ -21,7 +21,7 @@ internal extension String
   {
     guard let currentIndex = self.characters.index(of: c)
       else { return nil }
-    return self.distance(from: self.startIndex, to: currentIndex)
+    return self.distance(from: self.startIndex, to: self.index(of: c)!)
   }
   
   /// String subscripting

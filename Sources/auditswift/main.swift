@@ -1,5 +1,4 @@
 import Foundation
-import CommandLineKit
 import Rainbow
 import Progress
 
