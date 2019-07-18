@@ -3,6 +3,7 @@ import Rainbow
 import Progress
 
 let spinner = Spinner(pattern: .dots)
+var debug = false
 
 func printLogo() {
     let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "AuditSwift")
@@ -43,10 +44,13 @@ func parseCli() -> String{
 
     let dirPath = StringOption(shortFlag: "d", longFlag: "dir", required: true, 
         helpMessage: "The Swift package directory to audit.")
-    cli.addOptions(dirPath)
+    let debugOption = BoolOption(shortFlag: "g", longFlag: "debug", required: false, 
+        helpMessage: "Enable debug output.")
+    cli.addOptions(dirPath, debugOption)
     
     do {
         try cli.parse()
+        debug = debugOption.value ?? false
         return dirPath.value!
     } 
     catch {
@@ -76,7 +80,7 @@ func getLockFiles(dir: String) -> [String]
     }
     catch {
         spinner.stop()
-        print ("Error enumerating files in directory \(dir).".red())
+        print ("Error enumerating files in directory \(dir): \(error).".red())
         exit(1)
     }
     
@@ -91,7 +95,7 @@ func getSPMPackages(file: String) -> Packages
             from: Data(contentsOf: URL(fileURLWithPath: file)))
     }
     catch {
-        print ("Error reading JSON from file \(file).".red())
+        print ("Error reading JSON from file \(file): \(error).".red())
         exit(1)
     }
 }
@@ -157,6 +161,10 @@ for f in lockFiles {
                 exit(1)
             }
             let response = String(data: responseData, encoding: .utf8)!
+            if (debug)
+            {
+                print ("HTTP response: \(response)".blue())
+            }
             if !response.hasPrefix("[{\"coordinates\"")
             {
                 spinner.stop()
@@ -164,7 +172,7 @@ for f in lockFiles {
                 exit(1)
             }
             spinner.succeed(text: "Received \(responseData) from server.")
-            //print(response)
+            
             apiResponse = response
             apiData = responseData
         }
@@ -177,7 +185,7 @@ for f in lockFiles {
             printResults(results: results)
         }
         catch {
-            print ("Error decoding JSON \(apiResponse).".red())
+            print ("Error decoding JSON \(apiResponse): \(error).".red())
             exit(1)
         }
     

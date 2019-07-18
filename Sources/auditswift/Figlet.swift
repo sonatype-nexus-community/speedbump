@@ -4,9 +4,9 @@
 
 import Foundation
 
-internal struct Figlet
+struct Figlet
 {
-  internal enum FigError: Error
+  enum FigError: Error
   {
     case header(FigletHeader.FigError)
     case invalidHeader, fileReadError
@@ -21,7 +21,7 @@ internal struct Figlet
   private var letters = [Int: [String]]()
 }
 
-internal extension Figlet
+extension Figlet
 {
   private static func getTerminator(file: String) -> Character?
   {
@@ -43,7 +43,7 @@ internal extension Figlet
     }
   }
   
-  internal init?(fontFile path: String) throws
+  init?(fontFile path: String) throws
   {
     do
     {
@@ -55,7 +55,7 @@ internal extension Figlet
         return nil
       }
       
-      let lines = font.characters
+      let lines = font
         .split(separator: terminator, omittingEmptySubsequences: false)
         .map { String($0) }
       
@@ -96,7 +96,7 @@ internal extension Figlet
   }
 }
 
-internal extension Figlet
+extension Figlet
 {
   /// Array index for character scanline
   ///
@@ -118,7 +118,7 @@ internal extension Figlet
     // to avoid removing endmark character employed by a font design
     
     var endmarkScanIndex = scanline.startIndex..<scanline.endIndex
-    if scanline.characters.count >= 2
+    if scanline.count >= 2
     {
       endmarkScanIndex = scanline.index(scanline.endIndex, offsetBy: -2)..<scanline.endIndex
     }
@@ -141,13 +141,13 @@ internal extension Figlet
   }
 }
 
-internal extension Figlet
+extension Figlet
 {
   /// Draw text using a figlet font
   ///
   /// - parameter text: String
   /// - returns: String
-  internal func drawText(text: String) -> [String] {
+   func drawText(text: String) -> [String] {
     var result = [String]()
     for i in 0 ..< self.header.height
     {
@@ -157,7 +157,7 @@ internal extension Figlet
         if let arr = letters[Int(s.value)]
         {
           // rudimentary smushing, remove last character
-          line += arr[i].substring(with: 0..<arr[i].characters.count) ?? ""
+          line += arr[i].substring(with: 0..<arr[i].count) ?? ""
         }
       }
       result.append(line)
