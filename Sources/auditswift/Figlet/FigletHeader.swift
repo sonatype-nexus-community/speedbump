@@ -62,9 +62,9 @@ internal struct FigletHeader
 
 internal extension FigletHeader
 {
-  internal init(lines: [String], name: String) throws
+  init(lines: [String], name: String) throws
   {
-    let headerline = lines[0].characters
+    let headerline = lines[0]
       .split(separator: " ", omittingEmptySubsequences: false)
       .map { String($0) }
     
@@ -100,11 +100,11 @@ internal extension FigletHeader
     
     // Last line(foot) of FIGcharacter has two endmarks
     let foot = lines[comments + height].trim()
-    if foot.characters.count < 2
+    if foot.count < 2
     {
       throw Figlet.FigError.header(.endmarkInconsistency)
     }
-    let footEndmark = foot.substring(from: foot.index(foot.endIndex, offsetBy: -2))
+    let footEndmark = String(foot[foot.index(foot.endIndex, offsetBy: -2)...])
     guard let endmark = footEndmark.substring(atIndex: 0),
       let adjmark = footEndmark.substring(atIndex: 1), endmark == adjmark else {
         throw Figlet.FigError.header(.endmarkInconsistency)

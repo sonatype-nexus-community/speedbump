@@ -50,7 +50,7 @@ func parseCli() -> String{
     
     do {
         try cli.parse()
-        debug = debugOption.value ?? false
+        debug = debugOption.value
         return dirPath.value!
     } 
     catch {

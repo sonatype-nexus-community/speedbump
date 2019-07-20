@@ -27,21 +27,21 @@ extension String
       else {
         return nil
     }
-    return self.substring(with: start..<end)
+    return String(self[start..<end])
   }
   
   /// String subscripting
   ///
   /// - parameter atIndex: Int to use for extraction
   /// - returns: Character?
-  func substring(atIndex index: Int) -> Character?
+  func substring(atIndex i: Int) -> Character?
   {
-    guard let start = self.index(
-      self.startIndex, offsetBy: index, limitedBy: self.endIndex),
-      let end = self.index(
-        self.startIndex, offsetBy: index + 1, limitedBy: self.endIndex)
+    guard let _ = self.index(
+      self.startIndex, offsetBy: i, limitedBy: self.endIndex),
+      let _ = self.index(
+        self.startIndex, offsetBy: i + 1, limitedBy: self.endIndex)
       else { return nil }
-    return Character(self.substring(with: start..<end))
+    return self[index(startIndex, offsetBy: i)]
   }
 }
 
