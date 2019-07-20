@@ -108,8 +108,18 @@ func printResults(results: [Result])
     {
         let c = result.coordinates!.components(separatedBy: "/")
         let p = c[1].components(separatedBy: "@")
-        let d = result.description ?? ""
-        print ("Package: \(p[0])\nVersion: \(p[1])\nDescription: \(d)\n") 
+        let d = result.description ?? "None"
+        let v = result.vulnerabilities ?? []
+
+        print ("Package: \(p[0])\nVersion: \(p[1])\nDescription: \(d)")
+        if (v == [])
+        {
+            print ("Not vulnerable\n".underline.green)
+        }
+        else
+        {
+            print ("Vulnerable: \(v)\n".red)
+        } 
     }
 }
 let ossindex = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
