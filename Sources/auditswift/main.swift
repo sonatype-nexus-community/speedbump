@@ -5,9 +5,11 @@ import Progress
 let spinner = Spinner(pattern: .dots)
 var debug = false
 
+let emptyVulnerabilityHack = ",\"vulnerabilities\":\\[\\]"
+
 func printLogo() {
     let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "AuditSwift")
-    if let f = t {   
+    if let f = t {
         if let text = f {
             for s in text {
                 print(s)
@@ -19,7 +21,7 @@ func printLogo() {
             print("AuditSwift")
         }
     }
-    else {    
+    else {
         print("AuditSwift")
     }
     print ("v0.1.0\n")
@@ -42,17 +44,17 @@ func parseCli() -> String{
         return cli.defaultFormat(s: str, type: type)
     }
 
-    let dirPath = StringOption(shortFlag: "d", longFlag: "dir", required: true, 
+    let dirPath = StringOption(shortFlag: "d", longFlag: "dir", required: true,
         helpMessage: "The Swift package directory to audit.")
-    let debugOption = BoolOption(shortFlag: "g", longFlag: "debug", required: false, 
+    let debugOption = BoolOption(shortFlag: "g", longFlag: "debug", required: false,
         helpMessage: "Enable debug output.")
     cli.addOptions(dirPath, debugOption)
-    
+
     do {
         try cli.parse()
         debug = debugOption.value
         return dirPath.value!
-    } 
+    }
     catch {
         print("Audit a Swift package's dependencies for security vulnerabilities.\n")
         cli.printUsage(error)
@@ -83,7 +85,7 @@ func getLockFiles(dir: String) -> [String]
         print ("Error enumerating files in directory \(dir): \(error).".red())
         exit(1)
     }
-    
+
 }
 
 func getSPMPackages(file: String) -> Packages
@@ -91,7 +93,7 @@ func getSPMPackages(file: String) -> Packages
     let jsonDecoder = JSONDecoder()
     do
     {
-	    return try jsonDecoder.decode(Packages.self, 
+	    return try jsonDecoder.decode(Packages.self,
             from: Data(contentsOf: URL(fileURLWithPath: file)))
     }
     catch {
@@ -119,7 +121,7 @@ func printResults(results: [Result])
         else
         {
             print ("Vulnerable: \(v)\n".red)
-        } 
+        }
     }
 }
 let ossindex = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
@@ -163,7 +165,7 @@ for f in lockFiles {
                 print("error making POST request on \(ossindex)".red())
                 print(error!)
                 exit(1)
-                
+
             }
             guard let responseData = data else {
                 spinner.stop()
@@ -182,12 +184,23 @@ for f in lockFiles {
                 exit(1)
             }
             spinner.succeed(text: "Received \(responseData) from server.")
-            
+
             apiResponse = response
+            if (apiResponse == "") {
+              print("Error: Empty response from server".red())
+              exit(1)
+            }
             apiData = responseData
+            print ("Data retrieved")
+            print (responseData)
         }
         task.resume()
         while task.state == .running {}
+
+        // Even if the task is complete, the data may not be correctly assigned yet.
+        // This ensures we have data.
+        while apiResponse == "" {}
+
         let jsonDecoder = JSONDecoder()
         do
         {
@@ -198,11 +211,9 @@ for f in lockFiles {
             print ("Error decoding JSON \(apiResponse): \(error).".red())
             exit(1)
         }
-    
+
     }
     else {
         print("auditswift doesn't currently support package manager file \(f).".red())
     }
 }
-
-
