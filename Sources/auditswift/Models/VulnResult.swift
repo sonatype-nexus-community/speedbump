@@ -12,7 +12,7 @@ For support, please feel free to contact me at https://www.linkedin.com/in/syeda
 */
 
 import Foundation
-struct Result : Codable {
+struct VulnResult : Codable {
 	let coordinates : String?
 	let description: String?
 	let reference : String?

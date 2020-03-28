@@ -1,4 +1,5 @@
 import Foundation
+import FoundationNetworking
 import Rainbow
 import Progress
 
@@ -102,7 +103,7 @@ func getSPMPackages(file: String) -> Packages
     }
 }
 
-func printResults(results: [Result])
+func printResults(results: [VulnResult])
 {
     print("\nAudit Results")
     print ("=============\n")
@@ -204,7 +205,7 @@ for f in lockFiles {
         let jsonDecoder = JSONDecoder()
         do
         {
-	        let results = try jsonDecoder.decode([Result].self, from: apiData)
+	        let results = try jsonDecoder.decode([VulnResult].self, from: apiData)
             printResults(results: results)
         }
         catch {
