@@ -78,8 +78,8 @@ extension DiskStorage: StorageAware {
     let expiry = expiry ?? config.expiry
     let data = try transformer.toData(object)
     let filePath = makeFilePath(for: key)
-    _ = fileManager.createFile(atPath: filePath, contents: data, attributes: nil)
-    try fileManager.setAttributes([.modificationDate: expiry.date], ofItemAtPath: filePath)
+    _ = fileManager.createFile(atPath: filePath, contents: data, attributes: [.modificationDate: expiry.date])
+    //try fileManager.setAttributes([.modificationDate: expiry.date], ofItemAtPath: filePath)
   }
 
   public func removeObject(forKey key: String) throws {
@@ -199,7 +199,6 @@ extension DiskStorage {
     guard !fileManager.fileExists(atPath: path) else {
       return
     }
-
     try fileManager.createDirectory(atPath: path, withIntermediateDirectories: true,
                                     attributes: nil)
   }

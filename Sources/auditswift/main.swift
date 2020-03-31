@@ -5,10 +5,39 @@ import Progress
 
 let spinner = Spinner(pattern: .dots)
 var debug = false
+let diskCacheConfig = DiskConfig(name: "speed", expiry: .date(Date().addingTimeInterval(2*3600)))
+let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 10, totalCostLimit: 10)
+let storage = try? Storage(
+    diskConfig: diskCacheConfig,
+    memoryConfig: memoryCacheConfig,
+    transformer: TransformerFactory.forCodable(ofType: String.self) // Storage<User>
+    )
 
-let emptyVulnerabilityHack = ",\"vulnerabilities\":\\[\\]"
+func setObject(s:String) {
+    guard let cache = storage else {
+        return    
+    }
+    do
+    {
+        //try cache.setObject("Oslocccjjx", forKey: "my favobbbvrite cityxxx", expiry: .date(Date().addingTimeInterval(2*3600)))
+    }
+    catch {
+        print ("Could not write object to cache: \(error).")
+    }
+}
 
+func getObject()
+{
+    guard let cache = storage else {
+        return    
+    }
+    
+    let entry = try? cache.entry(forKey: "my favobbbvrite cityxxx")
+        
+}
 func printLogo() {
+    setObject(s:"foo")
+    getObject()
     let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "AuditSwift")
     if let f = t {
         if let text = f {
@@ -196,11 +225,7 @@ for f in lockFiles {
             print (responseData)
         }
         task.resume()
-        while task.state == .running {}
-
-        // Even if the task is complete, the data may not be correctly assigned yet.
-        // This ensures we have data.
-        while apiResponse == "" {}
+        while ((task.state == .running) || (apiResponse == "")) {}
 
         let jsonDecoder = JSONDecoder()
         do
