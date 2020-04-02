@@ -3,42 +3,42 @@ import FoundationNetworking
 import Rainbow
 import Progress
 
+let ossindexURL = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
 let spinner = Spinner(pattern: .dots)
 var debug = false
-let diskCacheConfig = DiskConfig(name: "speed", expiry: .date(Date().addingTimeInterval(2*3600)))
-let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 10, totalCostLimit: 10)
+let diskCacheConfig = DiskConfig(name: "speedbump", expiry: .date(Date().addingTimeInterval(12 * 3600)))
+let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 0, totalCostLimit: 0)
 let storage = try? Storage(
     diskConfig: diskCacheConfig,
     memoryConfig: memoryCacheConfig,
-    transformer: TransformerFactory.forCodable(ofType: String.self) // Storage<User>
+    transformer: TransformerFactory.forCodable(ofType: VulnResult.self) // Storage<VulnResult>
     )
 
-func setObject(s:String) {
+func addResultToCache(purl:String, result:VulnResult) {
     guard let cache = storage else {
         return    
     }
     do
     {
-        //try cache.setObject("Oslocccjjx", forKey: "my favobbbvrite cityxxx", expiry: .date(Date().addingTimeInterval(2*3600)))
+        try cache.setObject(result, forKey: purl)
     }
     catch {
         print ("Could not write object to cache: \(error).")
     }
 }
 
-func getObject()
+func getResultFromCache(purl: String) -> VulnResult?
 {
     guard let cache = storage else {
-        return    
+        return nil 
     }
-    
-    let entry = try? cache.entry(forKey: "my favobbbvrite cityxxx")
-        
+    guard let entry = try? cache.entry(forKey: purl) else {
+        return nil
+    }
+    return entry.object
 }
 func printLogo() {
-    setObject(s:"foo")
-    getObject()
-    let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "AuditSwift")
+    let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "SpeedBump")
     if let f = t {
         if let text = f {
             for s in text {
@@ -154,15 +154,13 @@ func printResults(results: [VulnResult])
         }
     }
 }
-let ossindex = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
 
+// CLI starts execution here
 printLogo()
 let d = parseCli()
-
 let lockFiles = getLockFiles(dir: d)
-
 if lockFiles.count == 0 {
-    print ("Did not find any package manager dependency lock files in directory \(d)".red())
+    print ("Did not find any Swift dependency lock files in directory \(d)".red())
     exit(1)
 }
 for f in lockFiles {
@@ -171,16 +169,23 @@ for f in lockFiles {
         spinner.start()
         let p = getSPMPackages(file: f)
         var coords = [String]()
-        for pin in p.object!.pins!
-        {
+        var cached = [VulnResult]()
+        for pin in p.object!.pins! {
             coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
+        }
+        for (index, purl) in coords.enumerated() {
+            let c = getResultFromCache(purl: purl)
+            if let r = c {
+                coords.remove(at: index)
+                cached.append(r)
+            }
         }
         let coordinates = ["coordinates": coords]
         spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
         print("Querying OSSIndex API...".green())
         spinner.start()
         let json = try! JSONSerialization.data(withJSONObject: coordinates)
-        var request = URLRequest(url: ossindex)
+        var request = URLRequest(url: ossindexURL)
         request.httpMethod = "POST"
         request.httpBody = json
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -192,10 +197,9 @@ for f in lockFiles {
             (data, response, error) in
             guard error == nil else {
                 spinner.stop()
-                print("error making POST request on \(ossindex)".red())
+                print("error making POST request to \(ossindexURL)".red())
                 print(error!)
                 exit(1)
-
             }
             guard let responseData = data else {
                 spinner.stop()
@@ -240,6 +244,6 @@ for f in lockFiles {
 
     }
     else {
-        print("auditswift doesn't currently support package manager file \(f).".red())
+        print("speedbump doesn't currently support package manager file \(f).".red())
     }
 }
