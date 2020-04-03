@@ -5,14 +5,24 @@ import Progress
 
 let ossindexURL = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
 let spinner = Spinner(pattern: .dots)
-var debug = false
+var debug = false, dump_cache = false, clear_cache = false
+let fileManager = FileManager.default
 let diskCacheConfig = DiskConfig(name: "speedbump", expiry: .date(Date().addingTimeInterval(12 * 3600)))
 let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 0, totalCostLimit: 0)
 let storage = try? Storage(
     diskConfig: diskCacheConfig,
     memoryConfig: memoryCacheConfig,
     transformer: TransformerFactory.forCodable(ofType: VulnResult.self) // Storage<VulnResult>
-    )
+)
+func printDebug(_ t:String) {
+    if (debug) {
+        print (t.yellow())
+    }
+}
+
+func printError(_ t:String) {
+    print (t.red())
+}
 
 func addResultToCache(purl:String, result:VulnResult) {
     guard let cache = storage else {
@@ -21,14 +31,14 @@ func addResultToCache(purl:String, result:VulnResult) {
     do
     {
         try cache.setObject(result, forKey: purl)
+        printDebug("Added \(purl) to cache.")
     }
     catch {
-        print ("Could not write object to cache: \(error).")
+        printError ("Could not write object to cache: \(error).")
     }
 }
 
-func getResultFromCache(purl: String) -> VulnResult?
-{
+func getResultFromCache(purl: String) -> VulnResult? {
     guard let cache = storage else {
         return nil 
     }
@@ -37,24 +47,86 @@ func getResultFromCache(purl: String) -> VulnResult?
     }
     return entry.object
 }
+
+func dumpCache() throws {
+        let url = try fileManager.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let path = url.appendingPathComponent("speedbump", isDirectory: true).path
+        let storageURL = URL(fileURLWithPath: path)
+        print("Cache directory is \(path).")
+
+    func getCacheObjects() throws {
+        let resourceKeys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .contentModificationDateKey,
+            .totalFileAllocatedSizeKey
+        ]
+        var resourceObjects = [ResourceObject]()
+        var filesToDelete = [URL]()
+        var totalSize: UInt = 0
+        let fileEnumerator = fileManager.enumerator(
+            at: storageURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: .skipsHiddenFiles,
+            errorHandler: nil
+        )
+        guard let urlArray = fileEnumerator?.allObjects as? [URL] else {
+            return
+        }
+
+        for url in urlArray {
+            let resourceValues = try url.resourceValues(forKeys: Set(resourceKeys))
+            guard resourceValues.isDirectory != true else {
+                continue
+            }
+
+            if let expiryDate = resourceValues.contentModificationDate, expiryDate.inThePast {
+                filesToDelete.append(url)
+                continue
+            }
+
+            if let fileSize = resourceValues.totalFileAllocatedSize {
+                totalSize += UInt(fileSize)
+                resourceObjects.append((url: url, resourceValues: resourceValues))
+            }
+        }
+
+        // Remove expired objects
+        //for url in filesToDelete {
+        //try fileManager.removeItem(at: url)
+        //onRemove?(url.path)
+        //}
+
+        // Remove objects if storage size exceeds max size
+        //try removeResourceObjects(resourceObjects, totalSize: totalSize)
+    }
+    guard let cache = storage else {
+        printError("The cache is not initialized.") 
+        return   
+    }
+}
 func printLogo() {
     let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "SpeedBump")
     if let f = t {
         if let text = f {
             for s in text {
-                print(s)
+                print(s.lightGreen())
             }
         }
         else
         {
             print("Could not draw text.")
-            print("AuditSwift")
+            print("SpeedBump".lightGreen())
         }
     }
     else {
-        print("AuditSwift")
+        print("SpeedBump".lightGreen())
     }
-    print ("v0.1.0\n")
+    print ("v0.2.0\n".lightGreen())
 }
 
 func parseCli() -> String{
@@ -76,13 +148,19 @@ func parseCli() -> String{
 
     let dirPath = StringOption(shortFlag: "d", longFlag: "dir", required: true,
         helpMessage: "The Swift package directory to audit.")
-    let debugOption = BoolOption(shortFlag: "g", longFlag: "debug", required: false,
+    let debugOption = BoolOption(longFlag: "debug", required: false,
         helpMessage: "Enable debug output.")
-    cli.addOptions(dirPath, debugOption)
+    let dumpCacheOption = BoolOption(longFlag: "dump-cache", required: false,
+        helpMessage: "Dump all cache entries")
+    let clearCacheOption = BoolOption(longFlag: "clear-cache", required: false,
+        helpMessage: "Clear cache.")
+    cli.addOptions(dirPath, debugOption, dumpCacheOption, clearCacheOption)
 
     do {
         try cli.parse()
         debug = debugOption.value
+        dump_cache = dumpCacheOption.value
+        clear_cache = clearCacheOption.value
         return dirPath.value!
     }
     catch {
@@ -97,7 +175,7 @@ func getLockFiles(dir: String) -> [String]
     spinner.start()
     do {
         if !FileManager.default.fileExists(atPath: dir) {
-            print ("The directory \(dir) does not exist.".red())
+            printError ("The directory \(dir) does not exist.".red())
             exit(1)
         }
         var lockFiles = [String]()
@@ -158,6 +236,20 @@ func printResults(results: [VulnResult])
 // CLI starts execution here
 printLogo()
 let d = parseCli()
+if debug {
+    print("Debug output enabled.")
+}
+if dump_cache {
+    do {
+        try dumpCache()
+        exit(0)
+    } 
+    catch {
+        print("Error enumerating cache entries: \(error).")
+        exit(1)   
+    }
+
+}
 let lockFiles = getLockFiles(dir: d)
 if lockFiles.count == 0 {
     print ("Did not find any Swift dependency lock files in directory \(d)".red())
