@@ -90,7 +90,7 @@ func dumpCache() throws {
             totalSize += UInt(fileSize)
             resourceObjects.append((url: url, resourceValues: resourceValues))
         }
-        print("Entry: \(url)")
+        print("Entry: \(url) Expires: \(resourceValues.contentModificationDate!).")
     }
     
     // Remove expired objects
@@ -103,6 +103,69 @@ func dumpCache() throws {
     //try removeResourceObjects(resourceObjects, totalSize: totalSize)
     
 }
+
+func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
+    print("\(coords.count) package(s) to query API.")
+    if coords.count == 0 {
+        return []
+    }
+    let coordinates = ["coordinates": coords]
+    print("Querying OSSIndex API...".green())
+    spinner.start()
+    let json = try! JSONSerialization.data(withJSONObject: coordinates)
+    var request = URLRequest(url: ossindexURL)
+    request.httpMethod = "POST"
+    request.httpBody = json
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
+    var apiData = Data()
+    var apiResponse = ""
+    let session = URLSession.shared
+    let task = session.dataTask(with: request) {
+        (data, response, error) in
+        guard error == nil else {
+            spinner.stop()
+            printError("Error making POST request to \(ossindexURL)")
+            exit(1)
+        }
+        guard let responseData = data else {
+            spinner.stop()
+            printError("Error: did not receive response data.")
+            exit(1)
+        }
+        let response = String(data: responseData, encoding: .utf8)!
+        printDebug("HTTP response: \(response).")
+        if !response.hasPrefix("[{\"coordinates\"")
+        {
+            spinner.stop()
+            printError("Error: did not receive coordinate data in response \(response).")
+            exit(1)
+        }
+        spinner.succeed(text: "Received \(responseData) from server.")
+
+        apiResponse = response
+        if (apiResponse == "") {
+            printError("Error: Empty response from server.")
+            exit(1)
+        }
+        apiData = responseData
+        print ("Data retrieved")
+        print (responseData)
+    }
+    task.resume()
+    while ((task.state == .running) || (apiResponse == "")) {}
+    let jsonDecoder = JSONDecoder()
+    do
+    {
+        let results = try jsonDecoder.decode([VulnResult].self, from: apiData)
+        return results
+    }
+    catch {
+        printError("Error decoding JSON response \(apiResponse): \(error).")
+        exit(1)
+    }
+}
+
 func printLogo() {
     let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "SpeedBump")
     if let f = t {
@@ -253,80 +316,28 @@ for f in lockFiles {
         print("Using Swift Package Manager file \(f)...".green())
         spinner.start()
         let p = getSPMPackages(file: f)
-        var coords = [String]()
+        var coords = [String](), _coords = [String]()
         var cached = [VulnResult]()
         for pin in p.object!.pins! {
-            coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
+            _coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
         }
-        for (index, purl) in coords.enumerated() {
+        spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
+        for (_, purl) in _coords.enumerated() {
             let c = getResultFromCache(purl: purl)
             if let r = c {
-                coords.remove(at: index)
                 cached.append(r)
                 printDebug("Using cached entry for \(purl).")
             }
-        }
-        let coordinates = ["coordinates": coords]
-        spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
-        print("Querying OSSIndex API...".green())
-        spinner.start()
-        let json = try! JSONSerialization.data(withJSONObject: coordinates)
-        var request = URLRequest(url: ossindexURL)
-        request.httpMethod = "POST"
-        request.httpBody = json
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
-        var apiData = Data()
-        var apiResponse = ""
-        let session = URLSession.shared
-        let task = session.dataTask(with: request) {
-            (data, response, error) in
-            guard error == nil else {
-                spinner.stop()
-                printError("Error making POST request to \(ossindexURL)")
-                exit(1)
-            }
-            guard let responseData = data else {
-                spinner.stop()
-                printError("Error: did not receive response data.")
-                exit(1)
-            }
-            let response = String(data: responseData, encoding: .utf8)!
-            printDebug("HTTP response: \(response).")
-            if !response.hasPrefix("[{\"coordinates\"")
-            {
-                spinner.stop()
-                printError("Error: did not receive coordinate data in response \(response).")
-                exit(1)
-            }
-            spinner.succeed(text: "Received \(responseData) from server.")
-
-            apiResponse = response
-            if (apiResponse == "") {
-              printError("Error: Empty response from server.")
-              exit(1)
-            }
-            apiData = responseData
-            print ("Data retrieved")
-            print (responseData)
-        }
-        task.resume()
-        while ((task.state == .running) || (apiResponse == "")) {}
-
-        let jsonDecoder = JSONDecoder()
-        do
-        {
-	        let results = try jsonDecoder.decode([VulnResult].self, from: apiData)
-            printResults(results: results)
-            for r in results {
-                addResultToCache(purl: r.coordinates!, result: r)
+            else {
+                coords.append(purl)
             }
         }
-        catch {
-            printError("Error decoding JSON \(apiResponse): \(error).")
-            exit(1)
+        print ("\(cached.count) cached package(s).")
+        let results = getVulnDataFromApi(coords: coords)
+        printResults(results: results + cached)
+        for r in results {
+            addResultToCache(purl: r.coordinates!, result: r)
         }
-
     }
     else {
         print("speedbump doesn't currently support package manager file \(f).".red())
