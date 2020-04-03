@@ -14,6 +14,7 @@ let storage = try? Storage(
     memoryConfig: memoryCacheConfig,
     transformer: TransformerFactory.forCodable(ofType: VulnResult.self) // Storage<VulnResult>
 )
+
 func printDebug(_ t:String) {
     if (debug) {
         print (t.yellow())
@@ -49,65 +50,58 @@ func getResultFromCache(purl: String) -> VulnResult? {
 }
 
 func dumpCache() throws {
-        let url = try fileManager.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let path = url.appendingPathComponent("speedbump", isDirectory: true).path
-        let storageURL = URL(fileURLWithPath: path)
-        print("Cache directory is \(path).")
-
-    func getCacheObjects() throws {
-        let resourceKeys: [URLResourceKey] = [
-            .isDirectoryKey,
-            .contentModificationDateKey,
-            .totalFileAllocatedSizeKey
-        ]
-        var resourceObjects = [ResourceObject]()
-        var filesToDelete = [URL]()
-        var totalSize: UInt = 0
-        let fileEnumerator = fileManager.enumerator(
-            at: storageURL,
-            includingPropertiesForKeys: resourceKeys,
-            options: .skipsHiddenFiles,
-            errorHandler: nil
-        )
-        guard let urlArray = fileEnumerator?.allObjects as? [URL] else {
-            return
+    let url = try fileManager.url(
+        for: .cachesDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    )
+    let path = url.appendingPathComponent("speedbump", isDirectory: true).path
+    let storageURL = URL(fileURLWithPath: path)
+    print("Cache directory is \(path).")
+    let resourceKeys: [URLResourceKey] = [
+        .isDirectoryKey,
+        .contentModificationDateKey,
+        .totalFileAllocatedSizeKey
+    ]
+    var resourceObjects = [ResourceObject]()
+    var expiredEntries = [URL]()
+    var totalSize: UInt = 0
+    let fileEnumerator = fileManager.enumerator(
+        at: storageURL,
+        includingPropertiesForKeys: resourceKeys,
+        options: .skipsHiddenFiles,
+        errorHandler: nil
+    )
+    guard let urlArray = fileEnumerator?.allObjects as? [URL] else {
+        return
+    }
+    for url in urlArray {
+        let resourceValues = try url.resourceValues(forKeys: Set(resourceKeys))
+        guard resourceValues.isDirectory != true else {
+            continue
         }
 
-        for url in urlArray {
-            let resourceValues = try url.resourceValues(forKeys: Set(resourceKeys))
-            guard resourceValues.isDirectory != true else {
-                continue
-            }
-
-            if let expiryDate = resourceValues.contentModificationDate, expiryDate.inThePast {
-                filesToDelete.append(url)
-                continue
-            }
-
-            if let fileSize = resourceValues.totalFileAllocatedSize {
-                totalSize += UInt(fileSize)
-                resourceObjects.append((url: url, resourceValues: resourceValues))
-            }
+        if let expiryDate = resourceValues.contentModificationDate, expiryDate.inThePast {
+            expiredEntries.append(url)
         }
 
-        // Remove expired objects
-        //for url in filesToDelete {
-        //try fileManager.removeItem(at: url)
-        //onRemove?(url.path)
-        //}
+        if let fileSize = resourceValues.totalFileAllocatedSize {
+            totalSize += UInt(fileSize)
+            resourceObjects.append((url: url, resourceValues: resourceValues))
+        }
+        print("Entry: \(url)")
+    }
+    
+    // Remove expired objects
+    //for url in filesToDelete {
+    //try fileManager.removeItem(at: url)
+    //onRemove?(url.path)
+    //}
 
-        // Remove objects if storage size exceeds max size
-        //try removeResourceObjects(resourceObjects, totalSize: totalSize)
-    }
-    guard let cache = storage else {
-        printError("The cache is not initialized.") 
-        return   
-    }
+    // Remove objects if storage size exceeds max size
+    //try removeResourceObjects(resourceObjects, totalSize: totalSize)
+    
 }
 func printLogo() {
     let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "SpeedBump")
@@ -248,7 +242,6 @@ if dump_cache {
         print("Error enumerating cache entries: \(error).")
         exit(1)   
     }
-
 }
 let lockFiles = getLockFiles(dir: d)
 if lockFiles.count == 0 {
@@ -270,6 +263,7 @@ for f in lockFiles {
             if let r = c {
                 coords.remove(at: index)
                 cached.append(r)
+                printDebug("Using cached entry for \(purl).")
             }
         }
         let coordinates = ["coordinates": coords]
@@ -289,31 +283,27 @@ for f in lockFiles {
             (data, response, error) in
             guard error == nil else {
                 spinner.stop()
-                print("error making POST request to \(ossindexURL)".red())
-                print(error!)
+                printError("Error making POST request to \(ossindexURL)")
                 exit(1)
             }
             guard let responseData = data else {
                 spinner.stop()
-                print("Error: did not receive data".red())
+                printError("Error: did not receive response data.")
                 exit(1)
             }
             let response = String(data: responseData, encoding: .utf8)!
-            if (debug)
-            {
-                print ("HTTP response: \(response)".blue())
-            }
+            printDebug("HTTP response: \(response).")
             if !response.hasPrefix("[{\"coordinates\"")
             {
                 spinner.stop()
-                print("Error: did not receive coordinate data".red())
+                printError("Error: did not receive coordinate data in response \(response).")
                 exit(1)
             }
             spinner.succeed(text: "Received \(responseData) from server.")
 
             apiResponse = response
             if (apiResponse == "") {
-              print("Error: Empty response from server".red())
+              printError("Error: Empty response from server.")
               exit(1)
             }
             apiData = responseData
@@ -328,9 +318,12 @@ for f in lockFiles {
         {
 	        let results = try jsonDecoder.decode([VulnResult].self, from: apiData)
             printResults(results: results)
+            for r in results {
+                addResultToCache(purl: r.coordinates!, result: r)
+            }
         }
         catch {
-            print ("Error decoding JSON \(apiResponse): \(error).".red())
+            printError("Error decoding JSON \(apiResponse): \(error).")
             exit(1)
         }
 
