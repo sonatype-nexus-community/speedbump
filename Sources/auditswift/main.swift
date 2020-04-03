@@ -14,7 +14,7 @@ let storage = try? Storage(
     memoryConfig: memoryCacheConfig,
     transformer: TransformerFactory.forCodable(ofType: VulnResult.self) // Storage<VulnResult>
 )
-
+var d:String
 func printDebug(_ t:String) {
     if (debug) {
         print (t.yellow())
@@ -76,6 +76,7 @@ func dumpCache() throws {
     guard let urlArray = fileEnumerator?.allObjects as? [URL] else {
         return
     }
+    print ("\(urlArray.count) package(s) in cache.")
     for url in urlArray {
         let resourceValues = try url.resourceValues(forKeys: Set(resourceKeys))
         guard resourceValues.isDirectory != true else {
@@ -101,7 +102,14 @@ func dumpCache() throws {
 
     // Remove objects if storage size exceeds max size
     //try removeResourceObjects(resourceObjects, totalSize: totalSize)
-    
+}
+
+func clearCache() throws {
+    guard let cache = storage else {
+        return
+    }
+    try cache.removeAll()
+    try dumpCache()
 }
 
 func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
@@ -186,47 +194,6 @@ func printLogo() {
     print ("v0.2.0\n".lightGreen())
 }
 
-func parseCli() -> String{
-    let cli = CommandLine()
-    cli.formatOutput = { s, type in
-        var str: String
-        switch(type) {
-        case .error:
-            str = s.red()
-        case .optionFlag:
-            str = s.green()
-        case .optionHelp:
-            str = s.blue()
-        default:
-            str = s.replacingOccurrences(of: ".build/debug/", with: "")
-        }
-        return cli.defaultFormat(s: str, type: type)
-    }
-
-    let dirPath = StringOption(shortFlag: "d", longFlag: "dir", required: true,
-        helpMessage: "The Swift package directory to audit.")
-    let debugOption = BoolOption(longFlag: "debug", required: false,
-        helpMessage: "Enable debug output.")
-    let dumpCacheOption = BoolOption(longFlag: "dump-cache", required: false,
-        helpMessage: "Dump all cache entries")
-    let clearCacheOption = BoolOption(longFlag: "clear-cache", required: false,
-        helpMessage: "Clear cache.")
-    cli.addOptions(dirPath, debugOption, dumpCacheOption, clearCacheOption)
-
-    do {
-        try cli.parse()
-        debug = debugOption.value
-        dump_cache = dumpCacheOption.value
-        clear_cache = clearCacheOption.value
-        return dirPath.value!
-    }
-    catch {
-        print("Audit a Swift package's dependencies for security vulnerabilities.\n")
-        cli.printUsage(error)
-        exit(1)
-    }
-}
-
 func getLockFiles(dir: String) -> [String]
 {
     spinner.start()
@@ -290,9 +257,50 @@ func printResults(results: [VulnResult])
     }
 }
 
+func parseCli() -> String? {
+    let cli = CommandLine()
+    cli.formatOutput = { s, type in
+        var str: String
+        switch(type) {
+        case .error:
+            str = s.red()
+        case .optionFlag:
+            str = s.green()
+        case .optionHelp:
+            str = s.blue()
+        default:
+            str = s.replacingOccurrences(of: ".build/debug/", with: "")
+        }
+        return cli.defaultFormat(s: str, type: type)
+    }
+
+    let dirPath = StringOption(shortFlag: "d", longFlag: "dir", required: false,
+        helpMessage: "The Swift package directory to audit.")
+    let debugOption = BoolOption(longFlag: "debug", required: false,
+        helpMessage: "Enable debug output.")
+    let dumpCacheOption = BoolOption(longFlag: "dump-cache", required: false,
+        helpMessage: "Dump all cache entries")
+    let clearCacheOption = BoolOption(longFlag: "clear-cache", required: false,
+        helpMessage: "Clear cache.")
+    cli.addOptions(dirPath, debugOption, dumpCacheOption, clearCacheOption)
+
+    do {
+        try cli.parse()
+        debug = debugOption.value
+        dump_cache = dumpCacheOption.value
+        clear_cache = clearCacheOption.value
+        return dirPath.value
+    }
+    catch {
+        print("Audit a Swift package's dependencies for security vulnerabilities.\n")
+        cli.printUsage(error)
+        exit(1)
+    }
+}
+
 // CLI starts execution here
 printLogo()
-let d = parseCli()
+let dir = parseCli()
 if debug {
     print("Debug output enabled.")
 }
@@ -306,6 +314,23 @@ if dump_cache {
         exit(1)   
     }
 }
+else if clear_cache {
+    do {
+        try clearCache()
+        exit(0)
+    }
+    catch {
+        printError ("Could not clear cache: \(error).")
+        exit(1)
+    }
+}
+else if dir == nil {
+    exit(0)
+}
+else
+{
+    d = dir!
+} 
 let lockFiles = getLockFiles(dir: d)
 if lockFiles.count == 0 {
     print ("Did not find any Swift dependency lock files in directory \(d)".red())
