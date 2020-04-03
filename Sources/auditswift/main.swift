@@ -5,7 +5,9 @@ import Progress
 
 let ossindexURL = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
 let spinner = Spinner(pattern: .dots)
+var d:String
 var debug = false, dump_cache = false, clear_cache = false
+var user:String?, pass:String?
 let fileManager = FileManager.default
 let diskCacheConfig = DiskConfig(name: "speedbump", expiry: .date(Date().addingTimeInterval(12 * 3600)))
 let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 0, totalCostLimit: 0)
@@ -14,7 +16,7 @@ let storage = try? Storage(
     memoryConfig: memoryCacheConfig,
     transformer: TransformerFactory.forCodable(ofType: VulnResult.self) // Storage<VulnResult>
 )
-var d:String
+
 func printDebug(_ t:String) {
     if (debug) {
         print (t.yellow())
@@ -119,6 +121,12 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     }
     let coordinates = ["coordinates": coords]
     print("Querying OSSIndex API...".green())
+    if (user != nil && pass != nil) {    
+        print("Using user authentication \(user!).")
+        let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
+        let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Restricted", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+        URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
+    }
     spinner.start()
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
     var request = URLRequest(url: ossindexURL)
@@ -128,6 +136,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
     var apiData = Data()
     var apiResponse = ""
+
     let session = URLSession.shared
     let task = session.dataTask(with: request) {
         (data, response, error) in
@@ -150,7 +159,6 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
             exit(1)
         }
         spinner.succeed(text: "Received \(responseData) from server.")
-
         apiResponse = response
         if (apiResponse == "") {
             printError("Error: Empty response from server.")
@@ -274,7 +282,7 @@ func parseCli() -> String? {
         return cli.defaultFormat(s: str, type: type)
     }
 
-    let dirPath = StringOption(shortFlag: "d", longFlag: "dir", required: false,
+    let dirPathOption = StringOption(shortFlag: "d", longFlag: "dir", required: false,
         helpMessage: "The Swift package directory to audit.")
     let debugOption = BoolOption(longFlag: "debug", required: false,
         helpMessage: "Enable debug output.")
@@ -282,20 +290,31 @@ func parseCli() -> String? {
         helpMessage: "Dump all cache entries")
     let clearCacheOption = BoolOption(longFlag: "clear-cache", required: false,
         helpMessage: "Clear cache.")
-    cli.addOptions(dirPath, debugOption, dumpCacheOption, clearCacheOption)
+    let userOption = StringOption(shortFlag: "u", longFlag: "user", required: false,
+        helpMessage: "(Optional) The OSS Index user for authentication.")
+    let passOption = StringOption(shortFlag: "p", longFlag: "pass", required: false,
+        helpMessage: "(Optional) The OSS Index password for authentication.")
+    cli.addOptions(dirPathOption, debugOption, dumpCacheOption, clearCacheOption, userOption, passOption)
 
     do {
         try cli.parse()
         debug = debugOption.value
         dump_cache = dumpCacheOption.value
         clear_cache = clearCacheOption.value
-        return dirPath.value
+        user = userOption.value
+        pass = passOption.value
+        if (!dump_cache && !clear_cache && (dirPathOption.value == nil))
+        {
+            cli.printUsage()
+        }
+        return dirPathOption.value
     }
     catch {
         print("Audit a Swift package's dependencies for security vulnerabilities.\n")
         cli.printUsage(error)
         exit(1)
     }
+
 }
 
 // CLI starts execution here
