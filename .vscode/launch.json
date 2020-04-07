@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "speedbump",
             "program": "${workspaceFolder}/.build/debug/auditswift",
-            "args": ["-d", "."],
+            "args": ["-d", ".", "-u", "fo", "-p","fo"],
             "cwd": "${workspaceFolder}"
 
         }

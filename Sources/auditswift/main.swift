@@ -121,25 +121,30 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     }
     let coordinates = ["coordinates": coords]
     print("Querying OSSIndex API...".green())
-    if (user != nil && pass != nil) {    
-        print("Using user authentication \(user!).")
-        let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
-        let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Restricted", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
-        URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
-    }
-    spinner.start()
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
     var request = URLRequest(url: ossindexURL)
     request.httpMethod = "POST"
     request.httpBody = json
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
-    var apiData = Data()
-    var apiResponse = ""
-
+    if (user != nil && pass != nil) {    
+        print("Using user authentication \(user!).")
+        let loginString = "\(user!):\(pass!)"
+        let loginData = loginString.data(using: String.Encoding.utf8)!
+        let base64LoginString = loginData.base64EncodedString()
+        request.httpMethod = "GET"
+        request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
+    }
+    spinner.start()
+    var apiData = Data(), apiResponse = ""
     let session = URLSession.shared
     let task = session.dataTask(with: request) {
         (data, response, error) in
+        //let headers = request.allHTTPHeaderFields
+        //if (debug)
+        //{
+        //    dump(headers)
+        //}
         guard error == nil else {
             spinner.stop()
             printError("Error making POST request to \(ossindexURL)")
@@ -151,7 +156,6 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
             exit(1)
         }
         let response = String(data: responseData, encoding: .utf8)!
-        printDebug("HTTP response: \(response).")
         if !response.hasPrefix("[{\"coordinates\"")
         {
             spinner.stop()
@@ -159,14 +163,13 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
             exit(1)
         }
         spinner.succeed(text: "Received \(responseData) from server.")
-        apiResponse = response
-        if (apiResponse == "") {
+        printDebug("HTTP response: \(response).")
+        if (response == "") {
             printError("Error: Empty response from server.")
             exit(1)
         }
+        apiResponse = response
         apiData = responseData
-        print ("Data retrieved")
-        print (responseData)
     }
     task.resume()
     while ((task.state == .running) || (apiResponse == "")) {}
