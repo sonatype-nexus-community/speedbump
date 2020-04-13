@@ -95,15 +95,6 @@ func dumpCache() throws {
         }
         print("Entry: \(url) Expires: \(resourceValues.contentModificationDate!).")
     }
-    
-    // Remove expired objects
-    //for url in filesToDelete {
-    //try fileManager.removeItem(at: url)
-    //onRemove?(url.path)
-    //}
-
-    // Remove objects if storage size exceeds max size
-    //try removeResourceObjects(resourceObjects, totalSize: totalSize)
 }
 
 func clearCache() throws {
@@ -135,19 +126,20 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         request.httpMethod = "GET"
         request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
+    if (debug) {
+        for (key, value) in request.allHTTPHeaderFields! {
+            printDebug("\(key):\(value)")
+        }
+    }
     spinner.start()
     var apiData = Data(), apiResponse = ""
     let session = URLSession.shared
     let task = session.dataTask(with: request) {
         (data, response, error) in
-        //let headers = request.allHTTPHeaderFields
-        //if (debug)
-        //{
-        //    dump(headers)
-        //}
         guard error == nil else {
             spinner.stop()
-            printError("Error making POST request to \(ossindexURL)")
+            apiResponse = "error"
+            printError("Error making POST request to \(ossindexURL): \(error!)")
             exit(1)
         }
         guard let responseData = data else {
