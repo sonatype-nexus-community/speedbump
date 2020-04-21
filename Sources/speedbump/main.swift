@@ -114,8 +114,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     print("Querying OSSIndex API...".green())
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
     var request = URLRequest(url: ossindexURL)
-    request.httpMethod = "POST"
-    request.httpBody = json
+    let sessionConfiguration = URLSessionConfiguration.default
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
     if (user != nil && pass != nil) {    
@@ -123,9 +122,11 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         let loginString = "\(user!):\(pass!)"
         let loginData = loginString.data(using: String.Encoding.utf8)!
         let base64LoginString = loginData.base64EncodedString()
-        request.httpMethod = "GET"
-        request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
+        sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
+        //request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
+    request.httpMethod = "GET"
+    request.httpBody = json
     if (debug) {
         for (key, value) in request.allHTTPHeaderFields! {
             printDebug("\(key):\(value)")
@@ -133,7 +134,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     }
     spinner.start()
     var apiData = Data(), apiResponse = ""
-    let session = URLSession.shared
+    let session = URLSession(configuration: sessionConfiguration)
     let task = session.dataTask(with: request) {
         (data, response, error) in
         guard error == nil else {
@@ -144,6 +145,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         }
         guard let responseData = data else {
             spinner.stop()
+            apiResponse = "error"
             printError("Error: did not receive response data.")
             exit(1)
         }
@@ -151,6 +153,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         if !response.hasPrefix("[{\"coordinates\"")
         {
             spinner.stop()
+            apiResponse = "error"
             printError("Error: did not receive coordinate data in response \(response).")
             exit(1)
         }
@@ -164,6 +167,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         apiData = responseData
     }
     task.resume()
+    
     while ((task.state == .running) || (apiResponse == "")) {}
     let jsonDecoder = JSONDecoder()
     do
@@ -309,7 +313,6 @@ func parseCli() -> String? {
         cli.printUsage(error)
         exit(1)
     }
-
 }
 
 // CLI starts execution here
