@@ -105,7 +105,17 @@ func clearCache() throws {
     try dumpCache()
 }
 
+
+class BasicAuthenticator: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, 
+       completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+
+    }
+}
+
 func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
+    var results:[VulnResult] = []
+    let semaphore = DispatchSemaphore.init(value: 0)
     print("\(coords.count) package(s) to query API.")
     if coords.count == 0 {
         return []
@@ -113,8 +123,9 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     let coordinates = ["coordinates": coords]
     print("Querying OSSIndex API...".green())
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
-    var request = URLRequest(url: ossindexURL)
     let sessionConfiguration = URLSessionConfiguration.default
+    var request = URLRequest(url: ossindexURL)
+    request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
     if (user != nil && pass != nil) {    
@@ -122,10 +133,14 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         let loginString = "\(user!):\(pass!)"
         let loginData = loginString.data(using: String.Encoding.utf8)!
         let base64LoginString = loginData.base64EncodedString()
-        sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
+        let credential = URLCredential(user: "username@gmail.com", password: "password", persistence: URLCredential.Persistence.forSession)
+        let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+        URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
+        
+        //sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
+        //sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
         //request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
-    request.httpMethod = "GET"
     request.httpBody = json
     if (debug) {
         for (key, value) in request.allHTTPHeaderFields! {
@@ -137,6 +152,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     let session = URLSession(configuration: sessionConfiguration)
     let task = session.dataTask(with: request) {
         (data, response, error) in
+        defer { semaphore.signal() }
         guard error == nil else {
             spinner.stop()
             apiResponse = "error"
@@ -165,20 +181,21 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         }
         apiResponse = response
         apiData = responseData
+        let jsonDecoder = JSONDecoder()
+        do
+        {
+            results = try jsonDecoder.decode([VulnResult].self, from: apiData)
+        }
+        catch {
+            printError("Error decoding JSON response \(apiResponse): \(error).")
+            exit(1)
+        }
     }
     task.resume()
-    
-    while ((task.state == .running) || (apiResponse == "")) {}
-    let jsonDecoder = JSONDecoder()
-    do
-    {
-        let results = try jsonDecoder.decode([VulnResult].self, from: apiData)
-        return results
+    if semaphore.wait(timeout: .now() + 15) == .timedOut {
+        printError("HTTP request timed out: \(task.state).")
     }
-    catch {
-        printError("Error decoding JSON response \(apiResponse): \(error).")
-        exit(1)
-    }
+    return results
 }
 
 func printLogo() {
