@@ -107,9 +107,17 @@ func clearCache() throws {
 
 
 class BasicAuthenticator: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate {
+    
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        printDebug("heke")
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        printDebug("heke")
+    }
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, 
        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-
+           printDebug("heke")
     }
 }
 
@@ -126,30 +134,25 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     let sessionConfiguration = URLSessionConfiguration.default
     var request = URLRequest(url: ossindexURL)
     request.httpMethod = "POST"
+    request.httpBody = json
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
     if (user != nil && pass != nil) {    
         print("Using user authentication \(user!).")
-        let loginString = "\(user!):\(pass!)"
-        let loginData = loginString.data(using: String.Encoding.utf8)!
-        let base64LoginString = loginData.base64EncodedString()
-        let credential = URLCredential(user: "username@gmail.com", password: "password", persistence: URLCredential.Persistence.forSession)
+        let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
         let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
         URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
-        
-        //sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
+        sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
+        // This block will set the auth header manually.
+        //let loginString = "\(user!):\(pass!)"
+        //let loginData = loginString.data(using: String.Encoding.utf8)!
+        //let base64LoginString = loginData.base64EncodedString()
         //sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
         //request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
-    request.httpBody = json
-    if (debug) {
-        for (key, value) in request.allHTTPHeaderFields! {
-            printDebug("\(key):\(value)")
-        }
-    }
     spinner.start()
     var apiData = Data(), apiResponse = ""
-    let session = URLSession(configuration: sessionConfiguration)
+    let session = URLSession.shared//(configuration: sessionConfiguration)//, delegate: BasicAuthenticator(), delegateQueue: nil)
     let task = session.dataTask(with: request) {
         (data, response, error) in
         defer { semaphore.signal() }
@@ -158,6 +161,17 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
             apiResponse = "error"
             printError("Error making POST request to \(ossindexURL): \(error!)")
             exit(1)
+        }
+        
+        if (debug) {
+            printDebug("HTTP request headers:")
+            for (key, value) in request.allHTTPHeaderFields! {
+                printDebug("\(key):\(value)")
+            }
+        }
+        if let r = response as? HTTPURLResponse {
+            printDebug("HTTP response headers:")
+            printDebug("\(r.description)")
         }
         guard let responseData = data else {
             spinner.stop()
@@ -193,7 +207,9 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     }
     task.resume()
     if semaphore.wait(timeout: .now() + 15) == .timedOut {
-        printError("HTTP request timed out: \(task.state).")
+        spinner.stop()
+        printError("HTTP request timed out.")
+        exit(1)
     }
     return results
 }
