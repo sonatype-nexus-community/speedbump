@@ -133,8 +133,6 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
     let sessionConfiguration = URLSessionConfiguration.default
     var request = URLRequest(url: ossindexURL)
-    request.httpMethod = "POST"
-    request.httpBody = json
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
     if (user != nil && pass != nil) {    
@@ -150,9 +148,11 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         //sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
         //request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
+    request.httpMethod = "POST"
+    request.httpBody = json
     spinner.start()
     var apiData = Data(), apiResponse = ""
-    let session = URLSession.shared//(configuration: sessionConfiguration)//, delegate: BasicAuthenticator(), delegateQueue: nil)
+    let session = URLSession(configuration: sessionConfiguration, delegate: BasicAuthenticator(), delegateQueue: nil)
     let task = session.dataTask(with: request) {
         (data, response, error) in
         defer { semaphore.signal() }
