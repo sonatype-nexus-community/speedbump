@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
 import FoundationNetworking
+#endif
 import Rainbow
 import Progress
 
@@ -105,22 +107,6 @@ func clearCache() throws {
     try dumpCache()
 }
 
-
-class BasicAuthenticator: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate {
-    
-    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
-        printDebug("heke")
-    }
-
-    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        printDebug("heke")
-    }
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, 
-       completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-           printDebug("heke")
-    }
-}
-
 func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     var results:[VulnResult] = []
     let semaphore = DispatchSemaphore.init(value: 0)
@@ -152,7 +138,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     request.httpBody = json
     spinner.start()
     var apiData = Data(), apiResponse = ""
-    let session = URLSession(configuration: sessionConfiguration, delegate: BasicAuthenticator(), delegateQueue: nil)
+    let session = URLSession(configuration: sessionConfiguration)
     let task = session.dataTask(with: request) {
         (data, response, error) in
         defer { semaphore.signal() }
