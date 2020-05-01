@@ -22,7 +22,7 @@ let storage = try? Storage(
 
 func printDebug(_ t:String) {
     if (debug) {
-        print (t.yellow())
+        print (t.blue())
     }
 }
 
@@ -297,10 +297,23 @@ func printResults(results: [VulnResult])
 
 func submitSBOM(coords: [String], sbom: String) {
     let semaphore = DispatchSemaphore.init(value: 0)
-    print("\(coords.count) package(s) to submit to IQ server for app id \(iqServerAppId!).")
     if coords.count == 0 {
         return
     }
+    let sessionConfiguration = URLSessionConfiguration.default
+    let url = URL(string: iqServerUrl!)
+    if (url == nil || (url!.scheme != "http" && url!.scheme != "https")) {
+        printError("The URL \(url!.debugDescription) is not valid.")
+        exit(1)
+    }
+    var request = URLRequest(url: url!)
+    print("\(coords.count) package(s) to submit to IQ server at \(url!.debugDescription) for app id \(iqServerAppId!).") 
+    print("Authenticating with user \(user!).")
+    let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
+    let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+    URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
+    sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
+
     /*
     let coordinates = ["coordinates": coords]
     print("Querying OSSIndex API...".green())
@@ -527,9 +540,10 @@ for f in lockFiles {
             xml += "    </components>\n"
             xml += "</bom>"
             if (debug) {                
-                print("Software BOM:\n\(xml)")
+                printDebug("Software BOM:\n\(xml)")
             } 
             submitSBOM(coords:_coords, sbom:xml)
+            exit(0)
         }
         
         for (_, purl) in _coords.enumerated() {
@@ -548,6 +562,7 @@ for f in lockFiles {
         for r in results {
             addResultToCache(purl: r.coordinates!, result: r)
         }
+        exit(0)
     }
     else {
         print("speedbump doesn't currently support package manager file \(f).".red())
