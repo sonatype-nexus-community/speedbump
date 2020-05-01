@@ -10,6 +10,7 @@ let spinner = Spinner(pattern: .dots)
 var d:String
 var debug = false, dump_cache = false, clear_cache = false
 var user:String?, pass:String?
+var iqServerUrl:String?, iqServerAppId:String?, sBom:String?
 let fileManager = FileManager.default
 let diskCacheConfig = DiskConfig(name: "speedbump", expiry: .date(Date().addingTimeInterval(12 * 3600)))
 let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 0, totalCostLimit: 0)
@@ -148,7 +149,6 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
             printError("Error making POST request to \(ossindexURL): \(error!)")
             exit(1)
         }
-        
         if (debug) {
             printDebug("HTTP request headers:")
             for (key, value) in request.allHTTPHeaderFields! {
@@ -283,6 +283,10 @@ func printResults(results: [VulnResult])
     }
 }
 
+func submitSBom() {
+
+}
+
 func parseCli() -> String? {
     let cli = CommandLine()
     cli.formatOutput = { s, type in
@@ -312,7 +316,12 @@ func parseCli() -> String? {
         helpMessage: "(Optional) The OSS Index user for authentication.")
     let passOption = StringOption(shortFlag: "p", longFlag: "pass", required: false,
         helpMessage: "(Optional) The OSS Index password for authentication.")
-    cli.addOptions(dirPathOption, debugOption, dumpCacheOption, clearCacheOption, userOption, passOption)
+    let iqServerUrlOption = StringOption(shortFlag: "s", longFlag: "server", required: false, 
+        helpMessage: "(Optional) The Nexus IQ Server Url to submit a software BOM to.")
+    let iqServerAppIdOption = StringOption(shortFlag: "i", longFlag: "appid", required: false,
+        helpMessage: "(Optional) The Nexus IQ Server application id for the current Swift directory.")
+    
+    cli.addOptions(dirPathOption, debugOption, dumpCacheOption, clearCacheOption, userOption, passOption, iqServerUrlOption, iqServerAppIdOption)
 
     do {
         try cli.parse()
@@ -325,12 +334,26 @@ func parseCli() -> String? {
         {
             cli.printUsage()
         }
+        iqServerUrl = iqServerUrlOption.value
+        iqServerAppId = iqServerAppIdOption.value
         return dirPathOption.value
     }
     catch {
         print("Audit a Swift package's dependencies for security vulnerabilities.\n")
         cli.printUsage(error)
         exit(1)
+    }
+}
+
+func pauseSpinner() {
+    if spinner.isRunning {
+        spinner.stop()
+    }
+}
+
+func resumeSpinner() {
+    if !spinner.isRunning {
+        spinner.start()
     }
 }
 
@@ -381,6 +404,30 @@ for f in lockFiles {
         var cached = [VulnResult]()
         for pin in p.object!.pins! {
             _coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
+        }
+        if (iqServerUrl != nil) {
+            var xml:String = 
+            """
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <bom xmlns="http://cyclonedx.org/schema/bom/1.1" version="1" serialNumber="urn:uuid:d0a742e2-760d-47fb-a8e8-33bf37f6f105">
+                <components>\n
+            """
+            for pin in p.object!.pins!
+            {
+                xml += "        <component type =\"library\">\n"
+                xml += "            <name>\(pin.package!)</name>\n"
+                xml += "            <version>\(pin.state!.version!)</version>\n"
+                xml += "            <purl>pkg:swift/\(pin.package!)@\(pin.state!.version!)</purl>\n"
+                xml += "        </component>\n"
+            }
+            xml += "    </components>\n"
+            xml += "</bom>"
+            sBom = xml
+            if (debug) {                
+                pauseSpinner()
+                print("Software BOM:\n\(sBom!)")
+                resumeSpinner()
+            } 
         }
         spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
         for (_, purl) in _coords.enumerated() {
