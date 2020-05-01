@@ -10,7 +10,7 @@ let spinner = Spinner(pattern: .dots)
 var d:String
 var debug = false, dump_cache = false, clear_cache = false
 var user:String?, pass:String?
-var iqServerUrl:String?, iqServerAppId:String?, sBom:String?
+var iqServerUrl:String?, iqServerAppId:String?
 let fileManager = FileManager.default
 let diskCacheConfig = DiskConfig(name: "speedbump", expiry: .date(Date().addingTimeInterval(12 * 3600)))
 let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 0, totalCostLimit: 0)
@@ -28,6 +28,18 @@ func printDebug(_ t:String) {
 
 func printError(_ t:String) {
     print (t.red())
+}
+
+func pauseSpinner() {
+    if spinner.isRunning {
+        spinner.stop()
+    }
+}
+
+func resumeSpinner() {
+    if !spinner.isRunning {
+        spinner.start()
+    }
 }
 
 func addResultToCache(purl:String, result:VulnResult) {
@@ -108,6 +120,66 @@ func clearCache() throws {
     try dumpCache()
 }
 
+func printLogo() {
+    let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "SpeedBump")
+    if let f = t {
+        if let text = f {
+            for s in text {
+                print(s.lightGreen())
+            }
+        }
+        else
+        {
+            print("Could not draw text.")
+            print("SpeedBump".lightGreen())
+        }
+    }
+    else {
+        print("SpeedBump".lightGreen())
+    }
+    print ("v0.2.0\n".lightGreen())
+}
+
+func getLockFiles(dir: String) -> [String]
+{
+    spinner.start()
+    do {
+        if !FileManager.default.fileExists(atPath: dir) {
+            printError ("The directory \(dir) does not exist.".red())
+            exit(1)
+        }
+        var lockFiles = [String]()
+        let fileURLs = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)
+        for file in fileURLs {
+            if file.pathExtension == "resolved" {
+                lockFiles.append(file.path)
+            }
+        }
+        spinner.succeed(text: "Found \(lockFiles.count) package manager file(s).")
+        return lockFiles
+    }
+    catch {
+        spinner.stop()
+        print ("Error enumerating files in directory \(dir): \(error).".red())
+        exit(1)
+    }
+
+}
+
+func getSPMPackages(file: String) -> Packages
+{
+    let jsonDecoder = JSONDecoder()
+    do
+    {
+	    return try jsonDecoder.decode(Packages.self,
+            from: Data(contentsOf: URL(fileURLWithPath: file)))
+    }
+    catch {
+        print ("Error reading JSON from file \(file): \(error).".red())
+        exit(1)
+    }
+}
+
 func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     var results:[VulnResult] = []
     let semaphore = DispatchSemaphore.init(value: 0)
@@ -123,7 +195,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
     if (user != nil && pass != nil) {    
-        print("Using user authentication \(user!).")
+        print("Authenticating with user \(user!).")
         let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
         let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
         URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
@@ -200,66 +272,6 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     return results
 }
 
-func printLogo() {
-    let t = try? Figlet(fontFile:"fonts/chunky.flf")?.drawText(text: "SpeedBump")
-    if let f = t {
-        if let text = f {
-            for s in text {
-                print(s.lightGreen())
-            }
-        }
-        else
-        {
-            print("Could not draw text.")
-            print("SpeedBump".lightGreen())
-        }
-    }
-    else {
-        print("SpeedBump".lightGreen())
-    }
-    print ("v0.2.0\n".lightGreen())
-}
-
-func getLockFiles(dir: String) -> [String]
-{
-    spinner.start()
-    do {
-        if !FileManager.default.fileExists(atPath: dir) {
-            printError ("The directory \(dir) does not exist.".red())
-            exit(1)
-        }
-        var lockFiles = [String]()
-        let fileURLs = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)
-        for file in fileURLs {
-            if file.pathExtension == "resolved" {
-                lockFiles.append(file.path)
-            }
-        }
-        spinner.succeed(text: "Found \(lockFiles.count) package manager file(s).")
-        return lockFiles
-    }
-    catch {
-        spinner.stop()
-        print ("Error enumerating files in directory \(dir): \(error).".red())
-        exit(1)
-    }
-
-}
-
-func getSPMPackages(file: String) -> Packages
-{
-    let jsonDecoder = JSONDecoder()
-    do
-    {
-	    return try jsonDecoder.decode(Packages.self,
-            from: Data(contentsOf: URL(fileURLWithPath: file)))
-    }
-    catch {
-        print ("Error reading JSON from file \(file): \(error).".red())
-        exit(1)
-    }
-}
-
 func printResults(results: [VulnResult])
 {
     print("\nAudit Results")
@@ -283,8 +295,97 @@ func printResults(results: [VulnResult])
     }
 }
 
-func submitSBom() {
-
+func submitSBOM(coords: [String], sbom: String) {
+    let semaphore = DispatchSemaphore.init(value: 0)
+    print("\(coords.count) package(s) to submit to IQ server for app id \(iqServerAppId!).")
+    if coords.count == 0 {
+        return
+    }
+    /*
+    let coordinates = ["coordinates": coords]
+    print("Querying OSSIndex API...".green())
+    let json = try! JSONSerialization.data(withJSONObject: coordinates)
+    let sessionConfiguration = URLSessionConfiguration.default
+    var request = URLRequest(url: ossindexURL)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
+    if (user != nil && pass != nil) {    
+        print("Authenticating with user \(user!).")
+        let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
+        let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+        URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
+        sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
+        // This block will set the auth header manually.
+        //let loginString = "\(user!):\(pass!)"
+        //let loginData = loginString.data(using: String.Encoding.utf8)!
+        //let base64LoginString = loginData.base64EncodedString()
+        //sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
+        //request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
+    }
+    request.httpMethod = "POST"
+    request.httpBody = json
+    spinner.start()
+    var apiData = Data(), apiResponse = ""
+    let session = URLSession(configuration: sessionConfiguration)
+    let task = session.dataTask(with: request) {
+        (data, response, error) in
+        defer { semaphore.signal() }
+        guard error == nil else {
+            spinner.stop()
+            apiResponse = "error"
+            printError("Error making POST request to \(ossindexURL): \(error!)")
+            exit(1)
+        }
+        if (debug) {
+            printDebug("HTTP request headers:")
+            for (key, value) in request.allHTTPHeaderFields! {
+                printDebug("\(key):\(value)")
+            }
+        }
+        if let r = response as? HTTPURLResponse {
+            printDebug("HTTP response headers:")
+            printDebug("\(r.description)")
+        }
+        guard let responseData = data else {
+            spinner.stop()
+            apiResponse = "error"
+            printError("Error: did not receive response data.")
+            exit(1)
+        }
+        let response = String(data: responseData, encoding: .utf8)!
+        if !response.hasPrefix("[{\"coordinates\"")
+        {
+            spinner.stop()
+            apiResponse = "error"
+            printError("Error: did not receive coordinate data in response \(response).")
+            exit(1)
+        }
+        spinner.succeed(text: "Received \(responseData) from server.")
+        printDebug("HTTP response: \(response).")
+        if (response == "") {
+            printError("Error: Empty response from server.")
+            exit(1)
+        }
+        apiResponse = response
+        apiData = responseData
+        let jsonDecoder = JSONDecoder()
+        do
+        {
+            results = try jsonDecoder.decode([VulnResult].self, from: apiData)
+        }
+        catch {
+            printError("Error decoding JSON response \(apiResponse): \(error).")
+            exit(1)
+        }
+    }
+    task.resume()
+    if semaphore.wait(timeout: .now() + 15) == .timedOut {
+        spinner.stop()
+        printError("HTTP request timed out.")
+        exit(1)
+    }
+    return results
+    */
 }
 
 func parseCli() -> String? {
@@ -349,26 +450,16 @@ func parseCli() -> String? {
             iqServerAppId = URL(fileURLWithPath: dir!).lastPathComponent
             print("Using \(iqServerAppId!) as the IQ Server app id.")
         }
+        else if (iqServerAppIdOption.wasSet) {
+            iqServerAppId = iqServerAppIdOption.value
+        }
         iqServerUrl = iqServerUrlOption.value
-        iqServerAppId = iqServerAppIdOption.value
         return dirPathOption.value
     }
     catch {
         print("Audit a Swift package's dependencies for security vulnerabilities.\n")
         cli.printUsage(error)
         exit(1)
-    }
-}
-
-func pauseSpinner() {
-    if spinner.isRunning {
-        spinner.stop()
-    }
-}
-
-func resumeSpinner() {
-    if !spinner.isRunning {
-        spinner.start()
     }
 }
 
@@ -417,6 +508,7 @@ for f in lockFiles {
         for pin in p.object!.pins! {
             _coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
         }
+        spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
         if (iqServerUrl != nil) {
             var xml:String = 
             """
@@ -434,14 +526,12 @@ for f in lockFiles {
             }
             xml += "    </components>\n"
             xml += "</bom>"
-            sBom = xml
             if (debug) {                
-                pauseSpinner()
-                print("Software BOM:\n\(sBom!)")
-                resumeSpinner()
+                print("Software BOM:\n\(xml)")
             } 
+            submitSBOM(coords:_coords, sbom:xml)
         }
-        spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
+        
         for (_, purl) in _coords.enumerated() {
             let c = getResultFromCache(purl: purl)
             if let r = c {
