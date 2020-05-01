@@ -313,9 +313,9 @@ func parseCli() -> String? {
     let clearCacheOption = BoolOption(longFlag: "clear-cache", required: false,
         helpMessage: "Clear cache.")
     let userOption = StringOption(shortFlag: "u", longFlag: "user", required: false,
-        helpMessage: "(Optional) The OSS Index user for authentication.")
+        helpMessage: "(Optional) The OSS Index or IQ Server user for authentication.")
     let passOption = StringOption(shortFlag: "p", longFlag: "pass", required: false,
-        helpMessage: "(Optional) The OSS Index password for authentication.")
+        helpMessage: "(Optional) The OSS Index or IQ Server password for authentication.")
     let iqServerUrlOption = StringOption(shortFlag: "s", longFlag: "server", required: false, 
         helpMessage: "(Optional) The Nexus IQ Server Url to submit a software BOM to.")
     let iqServerAppIdOption = StringOption(shortFlag: "i", longFlag: "appid", required: false,
@@ -325,14 +325,29 @@ func parseCli() -> String? {
 
     do {
         try cli.parse()
+        let dir = dirPathOption.value
         debug = debugOption.value
         dump_cache = dumpCacheOption.value
         clear_cache = clearCacheOption.value
         user = userOption.value
         pass = passOption.value
-        if (!dump_cache && !clear_cache && (dirPathOption.value == nil))
+        if debug {
+            print("Debug output enabled.")
+        }
+        if (dump_cache || clear_cache) {
+            return ""
+        }
+        if (!dump_cache && !clear_cache && (!dirPathOption.wasSet))
         {
             cli.printUsage()
+        }
+        if (iqServerUrlOption.wasSet && !(userOption.wasSet || passOption.wasSet)) {
+            printError("You must specify a user name and password for calling the IQ Server API.")
+            exit(2)
+        }
+        else if (iqServerUrlOption.wasSet && !iqServerAppIdOption.wasSet) {
+            iqServerAppId = URL(fileURLWithPath: dir!).lastPathComponent
+            print("Using \(iqServerAppId!) as the IQ Server app id.")
         }
         iqServerUrl = iqServerUrlOption.value
         iqServerAppId = iqServerAppIdOption.value
@@ -360,9 +375,6 @@ func resumeSpinner() {
 // CLI starts execution here
 printLogo()
 let dir = parseCli()
-if debug {
-    print("Debug output enabled.")
-}
 if dump_cache {
     do {
         try dumpCache()
@@ -382,14 +394,14 @@ else if clear_cache {
         printError ("Could not clear cache: \(error).")
         exit(1)
     }
-}
+} 
 else if dir == nil {
     exit(0)
 }
 else
 {
     d = dir!
-} 
+}
 let lockFiles = getLockFiles(dir: d)
 if lockFiles.count == 0 {
     print ("Did not find any Swift dependency lock files in directory \(d)".red())
