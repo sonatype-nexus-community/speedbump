@@ -300,24 +300,20 @@ func submitSBOM(coords: [String], sbom: String) {
     if coords.count == 0 {
         return
     }
-    let sessionConfiguration = URLSessionConfiguration.default
     let baseUrl = URL(string: iqServerUrl!)!
-    let baseUrlComponents = URLComponents(url: baseUrl, resolvingAgainstBaseURL: false)!
     print("Authenticating with user \(user!).")
-    let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
-    let protectionSpace = URLProtectionSpace(host: baseUrlComponents.host!, port: baseUrlComponents.port!, protocol: baseUrlComponents.scheme!, 
-        realm: "", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
-    URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
-    sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared
-    
     let appidRequestUrl = URL(string: "/api/v2/applications?publicId=\(iqServerAppId!)", relativeTo: baseUrl)!
     printDebug("URL for request: \(appidRequestUrl.absoluteString).")
     var appidRequest = URLRequest(url: appidRequestUrl)
-    let session = URLSession(configuration: sessionConfiguration)
+    let session = URLSession(configuration: URLSessionConfiguration.default)
     appidRequest.setValue("application/xml", forHTTPHeaderField: "Content-Type")
     appidRequest.httpMethod = "GET"
+    let loginString = "\(user!):\(pass!)"
+    let loginData = loginString.data(using: String.Encoding.utf8)!
+    let base64LoginString = loginData.base64EncodedString()
+    appidRequest.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     spinner.start()
-    let appidtask = session.dataTask(with: appidRequest/*with: appidRequest*/) {
+    let appidtask = session.dataTask(with: appidRequest) {
         (data, response, error) in
         defer { semaphore.signal() }
         guard error == nil else {
@@ -326,15 +322,18 @@ func submitSBOM(coords: [String], sbom: String) {
             exit(1)
         }
         if (debug) {
+            pauseSpinner()
             printDebug("HTTP request headers:")
-            
             for (key, value) in appidRequest.allHTTPHeaderFields! {
-                printDebug("\(key):\(value)")
+                printDebug("    \(key):\(value)")
             }
+            resumeSpinner()
         }
         if let r = response as? HTTPURLResponse {
+            pauseSpinner()
             printDebug("HTTP response headers:")
-            printDebug("\(r.description)")
+            printDebug("    \(r.description)")
+            resumeSpinner()
         }
         guard let responseData = data else {
             spinner.stop()
@@ -343,11 +342,12 @@ func submitSBOM(coords: [String], sbom: String) {
         }
     }
     appidtask.resume()
-    if semaphore.wait(timeout: .now() + 5) == .timedOut {
+    if semaphore.wait(timeout: .now() + 15) == .timedOut {
         spinner.stop()
         printError("HTTP request timed out.")
         exit(1)
     }
+    spinner.stop()
 
     /*
     var request = URLRequest(url: url)
@@ -552,7 +552,8 @@ else if clear_cache {
     }
 } 
 else if dir == nil {
-    exit(0)
+    printError("You must specify a Swift project folder to audit using the -d or --dir option.")
+    exit(2)
 }
 else
 {
@@ -597,24 +598,25 @@ for f in lockFiles {
             submitSBOM(coords:_coords, sbom:xml)
             exit(0)
         }
-        
-        for (_, purl) in _coords.enumerated() {
-            let c = getResultFromCache(purl: purl)
-            if let r = c {
-                cached.append(r)
-                printDebug("Using cached entry for \(purl).")
+        else {
+            for (_, purl) in _coords.enumerated() {
+                let c = getResultFromCache(purl: purl)
+                if let r = c {
+                    cached.append(r)
+                    printDebug("Using cached entry for \(purl).")
+                }
+                else {
+                    coords.append(purl)
+                }
             }
-            else {
-                coords.append(purl)
+            print ("\(cached.count) cached package(s).")
+            let results = getVulnDataFromApi(coords: coords)
+            printResults(results: results + cached)
+            for r in results {
+                addResultToCache(purl: r.coordinates!, result: r)
             }
+            exit(0)
         }
-        print ("\(cached.count) cached package(s).")
-        let results = getVulnDataFromApi(coords: coords)
-        printResults(results: results + cached)
-        for r in results {
-            addResultToCache(purl: r.coordinates!, result: r)
-        }
-        exit(0)
     }
     else {
         print("speedbump doesn't currently support package manager file \(f).".red())
