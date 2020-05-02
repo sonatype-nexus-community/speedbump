@@ -301,20 +301,64 @@ func submitSBOM(coords: [String], sbom: String) {
         return
     }
     let sessionConfiguration = URLSessionConfiguration.default
-    let url = URL(string: iqServerUrl!)
-    if (url == nil || (url!.scheme != "http" && url!.scheme != "https")) {
-        printError("The URL \(url!.debugDescription) is not valid.")
-        exit(1)
-    }
-    var request = URLRequest(url: url!)
-    print("\(coords.count) package(s) to submit to IQ server at \(url!.debugDescription) for app id \(iqServerAppId!).") 
+    let baseUrl = URL(string: iqServerUrl!)!
+    let baseUrlComponents = URLComponents(url: baseUrl, resolvingAgainstBaseURL: false)!
     print("Authenticating with user \(user!).")
     let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
-    let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+    let protectionSpace = URLProtectionSpace(host: baseUrlComponents.host!, port: baseUrlComponents.port!, protocol: baseUrlComponents.scheme!, 
+        realm: "", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
     URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
-    sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
+    sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared
+    
+    let appidRequestUrl = URL(string: "/api/v2/applications?publicId=\(iqServerAppId!)", relativeTo: baseUrl)!
+    printDebug("URL for request: \(appidRequestUrl.absoluteString).")
+    var appidRequest = URLRequest(url: appidRequestUrl)
+    let session = URLSession(configuration: sessionConfiguration)
+    appidRequest.setValue("application/xml", forHTTPHeaderField: "Content-Type")
+    appidRequest.httpMethod = "GET"
+    spinner.start()
+    let appidtask = session.dataTask(with: appidRequest/*with: appidRequest*/) {
+        (data, response, error) in
+        defer { semaphore.signal() }
+        guard error == nil else {
+            spinner.stop()
+            printError("Error making GET request to \(appidRequestUrl.absoluteString): \(error!)")
+            exit(1)
+        }
+        if (debug) {
+            printDebug("HTTP request headers:")
+            
+            for (key, value) in appidRequest.allHTTPHeaderFields! {
+                printDebug("\(key):\(value)")
+            }
+        }
+        if let r = response as? HTTPURLResponse {
+            printDebug("HTTP response headers:")
+            printDebug("\(r.description)")
+        }
+        guard let responseData = data else {
+            spinner.stop()
+            printError("Error: did not receive response data.")
+            exit(1)
+        }
+    }
+    appidtask.resume()
+    if semaphore.wait(timeout: .now() + 5) == .timedOut {
+        spinner.stop()
+        printError("HTTP request timed out.")
+        exit(1)
+    }
 
     /*
+    var request = URLRequest(url: url)
+    request.setValue("application/xml", forHTTPHeaderField: "Content-Type")
+    request.setValue("\(sbom.count)", forHTTPHeaderField: "Content-Length")
+    request.httpMethod = "GET"
+    request.httpBody = json
+    spinner.start()
+
+    
+    print("\(coords.count) package(s) to submit to IQ server at \(url.debugDescription) for app id \(iqServerAppId!).") 
     let coordinates = ["coordinates": coords]
     print("Querying OSSIndex API...".green())
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
@@ -466,7 +510,15 @@ func parseCli() -> String? {
         else if (iqServerAppIdOption.wasSet) {
             iqServerAppId = iqServerAppIdOption.value
         }
-        iqServerUrl = iqServerUrlOption.value
+
+        if (iqServerUrlOption.wasSet) {
+            iqServerUrl = iqServerUrlOption.value
+            let url = URL(string: iqServerUrl!)
+            if (url == nil || (url!.scheme != "http" && url!.scheme != "https")) {
+                printError("The URL \(url!.debugDescription) is not valid.")
+                exit(1)
+            }            
+        }
         return dirPathOption.value
     }
     catch {
