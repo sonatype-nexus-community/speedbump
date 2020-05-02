@@ -296,6 +296,7 @@ func printResults(results: [VulnResult])
 }
 
 func submitSBOM(coords: [String], sbom: String) {
+    var app:Applications? = nil
     let semaphore = DispatchSemaphore.init(value: 0)
     if coords.count == 0 {
         return
@@ -340,6 +341,17 @@ func submitSBOM(coords: [String], sbom: String) {
             printError("Error: did not receive response data.")
             exit(1)
         }
+        //let response = String(data: responseData, encoding: .utf8)!
+        printDebug("Response:\n \(responseData.debugDescription)")
+        let jsonDecoder = JSONDecoder()
+        do
+        {
+            app = try jsonDecoder.decode(Applications.self, from: responseData)
+        }
+        catch {
+            printError("Error decoding JSON response \(responseData.debugDescription): \(error).")
+            exit(1)
+        }
     }
     appidtask.resume()
     if semaphore.wait(timeout: .now() + 15) == .timedOut {
@@ -348,6 +360,8 @@ func submitSBOM(coords: [String], sbom: String) {
         exit(1)
     }
     spinner.stop()
+    let a = app!.applications![0]
+    print("Apps: \(a.id!)")
 
     /*
     var request = URLRequest(url: url)
