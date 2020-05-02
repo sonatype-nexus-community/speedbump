@@ -6,9 +6,7 @@ import Rainbow
 import Progress
 
 let ossindexURL = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
-let spinner = Spinner(pattern: .dots)
-var d:String
-var debug = false, dump_cache = false, clear_cache = false
+var d:String, debug = false, dump_cache = false, clear_cache = false
 var user:String?, pass:String?
 var iqServerUrl:String?, iqServerAppId:String?
 let fileManager = FileManager.default
@@ -19,6 +17,7 @@ let storage = try? Storage(
     memoryConfig: memoryCacheConfig,
     transformer: TransformerFactory.forCodable(ofType: VulnResult.self) // Storage<VulnResult>
 )
+var spinner = Spinner(pattern: .dots)
 
 func printDebug(_ t:String) {
     if (debug) {
@@ -142,6 +141,7 @@ func printLogo() {
 
 func getLockFiles(dir: String) -> [String]
 {
+    spinner = Spinner(pattern: .dots)
     spinner.start()
     do {
         if !FileManager.default.fileExists(atPath: dir) {
@@ -156,11 +156,11 @@ func getLockFiles(dir: String) -> [String]
             }
         }
         spinner.succeed(text: "Found \(lockFiles.count) package manager file(s).")
+        spinner.stopAndClear()
         return lockFiles
     }
     catch {
-        spinner.stop()
-        print ("Error enumerating files in directory \(dir): \(error).".red())
+        spinner.fail(text: "Error enumerating files in directory \(dir): \(error).".red())
         exit(1)
     }
 
@@ -188,85 +188,75 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         return []
     }
     let coordinates = ["coordinates": coords]
-    print("Querying OSSIndex API...".green())
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
     let sessionConfiguration = URLSessionConfiguration.default
     var request = URLRequest(url: ossindexURL)
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
-    if (user != nil && pass != nil) {    
-        print("Authenticating with user \(user!).")
-        let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
-        let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
-        URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
-        sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
-        // This block will set the auth header manually.
-        //let loginString = "\(user!):\(pass!)"
-        //let loginData = loginString.data(using: String.Encoding.utf8)!
-        //let base64LoginString = loginData.base64EncodedString()
-        //sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
-        //request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
-    }
     request.httpMethod = "POST"
     request.httpBody = json
-    spinner.start()
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    if (user != nil && pass != nil) {    
+        print("Authenticating with user \(user!).")
+        let loginString = "\(user!):\(pass!)"
+        let loginData = loginString.data(using: String.Encoding.utf8)!
+        let base64LoginString = loginData.base64EncodedString()
+        request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
+    }
     var apiData = Data(), apiResponse = ""
     let session = URLSession(configuration: sessionConfiguration)
+    print("Querying OSSIndex API...".green())
+    spinner = Spinner(pattern: .dots)
+    spinner.start()
     let task = session.dataTask(with: request) {
         (data, response, error) in
         defer { semaphore.signal() }
         guard error == nil else {
-            spinner.stop()
-            apiResponse = "error"
-            printError("Error making POST request to \(ossindexURL): \(error!)")
+            spinner.fail(text: "Error making POST request to \(ossindexURL): \(error!)")
             exit(1)
         }
         if (debug) {
+            pauseSpinner()
             printDebug("HTTP request headers:")
             for (key, value) in request.allHTTPHeaderFields! {
                 printDebug("\(key):\(value)")
             }
+            resumeSpinner()
         }
         if let r = response as? HTTPURLResponse {
+            pauseSpinner()
             printDebug("HTTP response headers:")
             printDebug("\(r.description)")
+            resumeSpinner()
         }
         guard let responseData = data else {
-            spinner.stop()
-            apiResponse = "error"
-            printError("Error: did not receive response data.")
+            spinner.fail(text: "Error: did not receive response data.")
             exit(1)
         }
         let response = String(data: responseData, encoding: .utf8)!
         if !response.hasPrefix("[{\"coordinates\"")
         {
-            spinner.stop()
-            apiResponse = "error"
-            printError("Error: did not receive coordinate data in response \(response).")
+            spinner.fail(text: "Error: did not receive coordinate data in response \(response).")
             exit(1)
         }
-        spinner.succeed(text: "Received \(responseData) from server.")
+        pauseSpinner()
         printDebug("HTTP response: \(response).")
+        resumeSpinner()
         if (response == "") {
-            printError("Error: Empty response from server.")
+            spinner.fail(text: "Error: Empty response from server.")
             exit(1)
         }
-        apiResponse = response
-        apiData = responseData
         let jsonDecoder = JSONDecoder()
         do
         {
-            results = try jsonDecoder.decode([VulnResult].self, from: apiData)
+            results = try jsonDecoder.decode([VulnResult].self, from: responseData)
         }
         catch {
-            printError("Error decoding JSON response \(apiResponse): \(error).")
+            spinner.fail(text: "Error decoding JSON response \(response): \(error).")
             exit(1)
         }
     }
     task.resume()
     if semaphore.wait(timeout: .now() + 15) == .timedOut {
-        spinner.stop()
-        printError("HTTP request timed out.")
+        spinner.fail(text: "HTTP request timed out.")
         exit(1)
     }
     return results
@@ -302,7 +292,6 @@ func submitSBOM(coords: [String], sbom: String) {
         return
     }
     let baseUrl = URL(string: iqServerUrl!)!
-    print("Authenticating with user \(user!).")
     let appidRequestUrl = URL(string: "/api/v2/applications?publicId=\(iqServerAppId!)", relativeTo: baseUrl)!
     printDebug("URL for request: \(appidRequestUrl.absoluteString).")
     var appidRequest = URLRequest(url: appidRequestUrl)
@@ -313,13 +302,15 @@ func submitSBOM(coords: [String], sbom: String) {
     let loginData = loginString.data(using: String.Encoding.utf8)!
     let base64LoginString = loginData.base64EncodedString()
     appidRequest.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
+    print("Authenticating with user \(user!).")
+    print("Finding IQ Server internal id for app \(iqServerAppId!)...".green())
+    spinner = Spinner(pattern: .dots)
     spinner.start()
     let appidtask = session.dataTask(with: appidRequest) {
         (data, response, error) in
         defer { semaphore.signal() }
         guard error == nil else {
-            spinner.stop()
-            printError("Error making GET request to \(appidRequestUrl.absoluteString): \(error!)")
+            spinner.fail(text: "Error making GET request to \(appidRequestUrl.absoluteString): \(error!)")
             exit(1)
         }
         if (debug) {
@@ -337,126 +328,30 @@ func submitSBOM(coords: [String], sbom: String) {
             resumeSpinner()
         }
         guard let responseData = data else {
-            spinner.stop()
-            printError("Error: did not receive response data.")
+            spinner.fail(text: "Error: did not receive response data.")
             exit(1)
         }
-        //let response = String(data: responseData, encoding: .utf8)!
+        pauseSpinner()
         printDebug("Response:\n \(responseData.debugDescription)")
+        resumeSpinner()
         let jsonDecoder = JSONDecoder()
         do
         {
             app = try jsonDecoder.decode(Applications.self, from: responseData)
         }
         catch {
-            printError("Error decoding JSON response \(responseData.debugDescription): \(error).")
+            spinner.fail(text: "Error decoding JSON response \(responseData.debugDescription): \(error).")
             exit(1)
         }
     }
     appidtask.resume()
     if semaphore.wait(timeout: .now() + 15) == .timedOut {
-        spinner.stop()
-        printError("HTTP request timed out.")
+        spinner.stop(text: "HTTP request timed out.")
         exit(1)
     }
-    spinner.stop()
-    let a = app!.applications![0]
-    print("Apps: \(a.id!)")
-
-    /*
-    var request = URLRequest(url: url)
-    request.setValue("application/xml", forHTTPHeaderField: "Content-Type")
-    request.setValue("\(sbom.count)", forHTTPHeaderField: "Content-Length")
-    request.httpMethod = "GET"
-    request.httpBody = json
-    spinner.start()
-
-    
-    print("\(coords.count) package(s) to submit to IQ server at \(url.debugDescription) for app id \(iqServerAppId!).") 
-    let coordinates = ["coordinates": coords]
-    print("Querying OSSIndex API...".green())
-    let json = try! JSONSerialization.data(withJSONObject: coordinates)
-    let sessionConfiguration = URLSessionConfiguration.default
-    var request = URLRequest(url: ossindexURL)
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("\(json.count)", forHTTPHeaderField: "Content-Length")
-    if (user != nil && pass != nil) {    
-        print("Authenticating with user \(user!).")
-        let credential = URLCredential(user: user!, password: pass!, persistence: URLCredential.Persistence.forSession)
-        let protectionSpace = URLProtectionSpace(host: "ossindex.sonatype.org", port: 443, protocol: "https", realm: "Sonatype OSS Index", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
-        URLCredentialStorage.shared.setDefaultCredential(credential, for: protectionSpace)
-        sessionConfiguration.urlCredentialStorage = URLCredentialStorage.shared //setDefaultCredential(credential, for: protectionSpace)
-        // This block will set the auth header manually.
-        //let loginString = "\(user!):\(pass!)"
-        //let loginData = loginString.data(using: String.Encoding.utf8)!
-        //let base64LoginString = loginData.base64EncodedString()
-        //sessionConfiguration.httpAdditionalHeaders = ["Authorization": "Basic \(base64LoginString)"]
-        //request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
-    }
-    request.httpMethod = "POST"
-    request.httpBody = json
-    spinner.start()
-    var apiData = Data(), apiResponse = ""
-    let session = URLSession(configuration: sessionConfiguration)
-    let task = session.dataTask(with: request) {
-        (data, response, error) in
-        defer { semaphore.signal() }
-        guard error == nil else {
-            spinner.stop()
-            apiResponse = "error"
-            printError("Error making POST request to \(ossindexURL): \(error!)")
-            exit(1)
-        }
-        if (debug) {
-            printDebug("HTTP request headers:")
-            for (key, value) in request.allHTTPHeaderFields! {
-                printDebug("\(key):\(value)")
-            }
-        }
-        if let r = response as? HTTPURLResponse {
-            printDebug("HTTP response headers:")
-            printDebug("\(r.description)")
-        }
-        guard let responseData = data else {
-            spinner.stop()
-            apiResponse = "error"
-            printError("Error: did not receive response data.")
-            exit(1)
-        }
-        let response = String(data: responseData, encoding: .utf8)!
-        if !response.hasPrefix("[{\"coordinates\"")
-        {
-            spinner.stop()
-            apiResponse = "error"
-            printError("Error: did not receive coordinate data in response \(response).")
-            exit(1)
-        }
-        spinner.succeed(text: "Received \(responseData) from server.")
-        printDebug("HTTP response: \(response).")
-        if (response == "") {
-            printError("Error: Empty response from server.")
-            exit(1)
-        }
-        apiResponse = response
-        apiData = responseData
-        let jsonDecoder = JSONDecoder()
-        do
-        {
-            results = try jsonDecoder.decode([VulnResult].self, from: apiData)
-        }
-        catch {
-            printError("Error decoding JSON response \(apiResponse): \(error).")
-            exit(1)
-        }
-    }
-    task.resume()
-    if semaphore.wait(timeout: .now() + 15) == .timedOut {
-        spinner.stop()
-        printError("HTTP request timed out.")
-        exit(1)
-    }
-    return results
-    */
+    let internalAppId = app!.applications![0].id!
+    spinner.succeed(text: "Internal id for app id \(iqServerAppId!) is \(internalAppId).")
+    spinner.stopAndClear()
 }
 
 func parseCli() -> String? {
@@ -589,6 +484,7 @@ for f in lockFiles {
             _coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
         }
         spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
+        spinner.stopAndClear()
         if (iqServerUrl != nil) {
             var xml:String = 
             """
@@ -633,6 +529,7 @@ for f in lockFiles {
         }
     }
     else {
-        print("speedbump doesn't currently support package manager file \(f).".red())
+        printError("speedbump doesn't currently support package manager file \(f).")
+        exit(3)
     }
 }
