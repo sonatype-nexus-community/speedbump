@@ -8,7 +8,7 @@ import Progress
 let ossindexURL = URL(string: "https://ossindex.sonatype.org/api/v3/component-report")!
 var d:String, debug = false, dump_cache = false, clear_cache = false
 var user:String?, pass:String?
-var iqServerUrl:String?, iqServerAppId:String?
+var iqServerUser, iqServerPass, iqServerUrl:String?, iqServerAppId:String?
 let fileManager = FileManager.default
 let diskCacheConfig = DiskConfig(name: "speedbump", expiry: .date(Date().addingTimeInterval(12 * 3600)))
 let memoryCacheConfig = MemoryConfig.init(expiry: .never, countLimit: 0, totalCostLimit: 0)
@@ -201,7 +201,6 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         let base64LoginString = loginData.base64EncodedString()
         request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
-    var apiData = Data(), apiResponse = ""
     let session = URLSession(configuration: sessionConfiguration)
     print("Querying OSSIndex API...".green())
     spinner = Spinner(pattern: .dots)
@@ -298,11 +297,11 @@ func submitSBOM(coords: [String], sbom: String) {
     let session = URLSession(configuration: URLSessionConfiguration.default)
     appidRequest.setValue("application/xml", forHTTPHeaderField: "Content-Type")
     appidRequest.httpMethod = "GET"
-    let loginString = "\(user!):\(pass!)"
+    let loginString = "\(iqServerUser!):\(iqServerPass!)"
     let loginData = loginString.data(using: String.Encoding.utf8)!
     let base64LoginString = loginData.base64EncodedString()
     appidRequest.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
-    print("Authenticating with user \(user!).")
+    print("Authenticating with user \(iqServerUser!).")
     print("Finding IQ Server internal id for app \(iqServerAppId!)...".green())
     spinner = Spinner(pattern: .dots)
     spinner.start()
@@ -350,7 +349,65 @@ func submitSBOM(coords: [String], sbom: String) {
         exit(1)
     }
     let internalAppId = app!.applications![0].id!
-    spinner.succeed(text: "Internal id for app id \(iqServerAppId!) is \(internalAppId).")
+    spinner.succeed(text: "Internal id for app \(iqServerAppId!) is \(internalAppId).")
+    spinner.stopAndClear()
+
+    var scanStatus:ScanStatus? = nil
+    let sbomRequestUrl = URL(string: "/api/v2/scan/applications/\(internalAppId)/sources/speedbump?stageId=develop", relativeTo: baseUrl)!
+    printDebug("URL for request: \(sbomRequestUrl.absoluteString).")
+    var sbomRequest = URLRequest(url: sbomRequestUrl)
+    sbomRequest.httpMethod = "POST"
+    sbomRequest.httpBody = sbom.data(using: .utf8)
+    sbomRequest.setValue("application/xml", forHTTPHeaderField: "Content-Type")
+    sbomRequest.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
+    print("Sending SBOM for app \(iqServerAppId!)...".green())
+    spinner = Spinner(pattern: .dots)
+    spinner.start()
+    let sbomtask = session.dataTask(with: sbomRequest) {
+        (data, response, error) in
+        defer { semaphore.signal() }
+        guard error == nil else {
+            spinner.fail(text: "Error making POST request to \(sbomRequestUrl.absoluteString): \(error!)")
+            exit(1)
+        }
+        if (debug) {
+            pauseSpinner()
+            printDebug("HTTP request headers:")
+            for (key, value) in sbomRequest.allHTTPHeaderFields! {
+                printDebug("    \(key):\(value)")
+            }
+            resumeSpinner()
+        }
+        if let r = response as? HTTPURLResponse {
+            pauseSpinner()
+            printDebug("HTTP response headers:")
+            printDebug("    \(r.description)")
+            resumeSpinner()
+        }
+        guard let responseData = data else {
+            spinner.fail(text: "Error: did not receive response data.")
+            exit(1)
+        }
+        pauseSpinner()
+        printDebug("Response:\n \(String(decoding: responseData, as: UTF8.self))")
+        resumeSpinner()
+        let jsonDecoder = JSONDecoder()
+        do
+        {
+            scanStatus = try jsonDecoder.decode(ScanStatus.self, from: responseData)
+        }
+        catch {
+            spinner.fail(text: "Error decoding JSON response \(responseData.debugDescription): \(error).")
+            exit(1)
+        }
+    }
+    sbomtask.resume()
+    if semaphore.wait(timeout: .now() + 15) == .timedOut {
+        spinner.stop(text: "HTTP request timed out.")
+        exit(1)
+    }
+    let statusUrl = URL(string: scanStatus!.statusUrl!, relativeTo: baseUrl)
+    spinner.succeed(text: "SBOM request complete. IQ Server report status is at \(statusUrl!.absoluteString).")
     spinner.stopAndClear()
 }
 
@@ -379,16 +436,20 @@ func parseCli() -> String? {
         helpMessage: "Dump all cache entries")
     let clearCacheOption = BoolOption(longFlag: "clear-cache", required: false,
         helpMessage: "Clear cache.")
-    let userOption = StringOption(shortFlag: "u", longFlag: "user", required: false,
-        helpMessage: "(Optional) The OSS Index or IQ Server user for authentication.")
-    let passOption = StringOption(shortFlag: "p", longFlag: "pass", required: false,
-        helpMessage: "(Optional) The OSS Index or IQ Server password for authentication.")
+    let userOption = StringOption(longFlag: "user", required: false,
+        helpMessage: "(Optional) The OSS Index user for authentication.")
+    let passOption = StringOption(longFlag: "pass", required: false,
+        helpMessage: "(Optional) The OSS Index password for authentication.")
+    let iqServerUserOption = StringOption(shortFlag: "u", longFlag: "iquser", required: false,
+        helpMessage: "(Optional) The IQ Server user for authentication.")
+    let iqServerPassOption = StringOption(shortFlag: "p", longFlag: "iqpass", required: false,
+        helpMessage: "(Optional) The IQ Server password for authentication.")
     let iqServerUrlOption = StringOption(shortFlag: "s", longFlag: "server", required: false, 
         helpMessage: "(Optional) The Nexus IQ Server Url to submit a software BOM to.")
     let iqServerAppIdOption = StringOption(shortFlag: "i", longFlag: "appid", required: false,
         helpMessage: "(Optional) The Nexus IQ Server application id for the current Swift directory.")
     
-    cli.addOptions(dirPathOption, debugOption, dumpCacheOption, clearCacheOption, userOption, passOption, iqServerUrlOption, iqServerAppIdOption)
+    cli.addOptions(dirPathOption, debugOption, dumpCacheOption, clearCacheOption, userOption, passOption, iqServerUserOption, iqServerPassOption, iqServerUrlOption, iqServerAppIdOption)
 
     do {
         try cli.parse()
@@ -408,11 +469,8 @@ func parseCli() -> String? {
         {
             cli.printUsage()
         }
-        if (iqServerUrlOption.wasSet && !(userOption.wasSet || passOption.wasSet)) {
-            printError("You must specify a user name and password for calling the IQ Server API.")
-            exit(2)
-        }
-        else if (iqServerUrlOption.wasSet && !iqServerAppIdOption.wasSet) {
+        
+        if (iqServerUrlOption.wasSet && !iqServerAppIdOption.wasSet) {
             iqServerAppId = URL(fileURLWithPath: dir!).lastPathComponent
             print("Using \(iqServerAppId!) as the IQ Server app id.")
         }
@@ -420,14 +478,21 @@ func parseCli() -> String? {
             iqServerAppId = iqServerAppIdOption.value
         }
 
-        if (iqServerUrlOption.wasSet) {
+        if (iqServerUrlOption.wasSet && !(iqServerUserOption.wasSet || iqServerPassOption.wasSet)) {
+            printError("You must specify a user name and password for calling the IQ Server API.")
+            exit(2)
+        }
+        else if (iqServerUrlOption.wasSet && iqServerUserOption.wasSet && iqServerPassOption.wasSet) {
             iqServerUrl = iqServerUrlOption.value
             let url = URL(string: iqServerUrl!)
             if (url == nil || (url!.scheme != "http" && url!.scheme != "https")) {
                 printError("The URL \(url!.debugDescription) is not valid.")
                 exit(1)
             }            
+            iqServerUser = iqServerUserOption.value
+            iqServerPass = iqServerPassOption.value
         }
+
         return dirPathOption.value
     }
     catch {
