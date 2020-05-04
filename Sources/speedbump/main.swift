@@ -353,7 +353,7 @@ func submitSBOM(coords: [String], sbom: String) {
     spinner.stopAndClear()
 
     var scanStatus:ScanStatus? = nil
-    let sbomRequestUrl = URL(string: "/api/v2/scan/applications/\(internalAppId)/sources/speedbump?stageId=develop", relativeTo: baseUrl)!
+    let sbomRequestUrl = URL(string: "/api/v2/scan/applications/\(internalAppId)/sources/speedbump", relativeTo: baseUrl)!
     printDebug("URL for request: \(sbomRequestUrl.absoluteString).")
     var sbomRequest = URLRequest(url: sbomRequestUrl)
     sbomRequest.httpMethod = "POST"
