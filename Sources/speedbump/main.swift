@@ -183,7 +183,6 @@ func getSPMPackages(file: String) -> Packages
 func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     var results:[VulnResult] = []
     let semaphore = DispatchSemaphore.init(value: 0)
-    print("\(coords.count) package(s) to query API.")
     if coords.count == 0 {
         return []
     }
@@ -202,7 +201,7 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
     let session = URLSession(configuration: sessionConfiguration)
-    print("Querying OSSIndex API...".green())
+    print("Querying OSSIndex API for vulnerability data for \(coords.count) packages...".green())
     spinner = Spinner(pattern: .dots)
     spinner.start()
     let task = session.dataTask(with: request) {
@@ -546,10 +545,25 @@ for f in lockFiles {
         var coords = [String](), _coords = [String]()
         var cached = [VulnResult]()
         for pin in p.object!.pins! {
-            _coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
+            if let repoUrl = pin.repositoryURL {
+                let c = URLComponents(url: URL(string: repoUrl)!, resolvingAgainstBaseURL: false)
+                let ns = c!.host! + "/" + c!.path.split(by: "/")[1]
+                //printDebug("Package namespace is: \(ns)")
+                _coords.append("pkg:swift/\(ns)/\(pin.package!)@\(pin.state!.version!)")    
+            }
+            else {
+                _coords.append("pkg:swift/\(pin.package!)@\(pin.state!.version!)")
+            }
         }
         spinner.succeed(text: "Parsed \(p.object!.pins!.count) packages from \(f).")
         spinner.stopAndClear()
+        if (debug)
+        {
+            printDebug("Package coordinates:")
+            for c in _coords {
+                printDebug(c);
+            }
+        }
         if (iqServerUrl != nil) {
             var xml:String = 
             """
