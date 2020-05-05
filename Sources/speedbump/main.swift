@@ -266,19 +266,19 @@ func printResults(results: [VulnResult])
     print ("=============\n")
     for result in results
     {
-        let c = result.coordinates!.components(separatedBy: "/")
-        let p = c[1].components(separatedBy: "@")
-        let d = result.description ?? "None"
-        let v = result.vulnerabilities ?? []
-
-        print ("Package: \(p[0])\nVersion: \(p[1])\nDescription: \(d)")
-        if (v == [])
-        {
-            print ("Not vulnerable\n".underline.green)
-        }
-        else
-        {
-            print ("Vulnerable: \(v)\n".red)
+        let pkg = result.coordinates!.components(separatedBy: "/").last!.components(separatedBy: "@")  
+        let name = pkg[0]
+        let version = pkg[1]
+        let desc = result.description ?? "None"
+        let vulns = result.vulnerabilities!
+        if (vulns.count > 0) {
+            print ("Package: \(name)\nVersion: \(version)\nDescription: \(desc)")
+            print("Vulnerable: YES".red())
+            for v in vulns {
+                if let cve = v.cve {
+                    print("CVE: \(cve)")
+                }
+            }
         }
     }
 }
