@@ -188,11 +188,12 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
     }
     let coordinates = ["coordinates": coords]
     let json = try! JSONSerialization.data(withJSONObject: coordinates)
-    let sessionConfiguration = URLSessionConfiguration.default
+    
     var request = URLRequest(url: ossindexURL)
+    let session = URLSession(configuration: URLSessionConfiguration.default)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpMethod = "POST"
     request.httpBody = json
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     if (user != nil && pass != nil) {    
         print("Authenticating with user \(user!).")
         let loginString = "\(user!):\(pass!)"
@@ -200,7 +201,6 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
         let base64LoginString = loginData.base64EncodedString()
         request.setValue("Basic \(base64LoginString)", forHTTPHeaderField: "Authorization")
     }
-    let session = URLSession(configuration: sessionConfiguration)
     print("Querying OSSIndex API for vulnerability data for \(coords.count) packages...".green())
     spinner = Spinner(pattern: .dots)
     spinner.start()
@@ -217,35 +217,29 @@ func getVulnDataFromApi(coords: [String]) -> [VulnResult] {
             for (key, value) in request.allHTTPHeaderFields! {
                 printDebug("\(key):\(value)")
             }
+            if let r = response as? HTTPURLResponse {
+                printDebug("HTTP response headers:")
+                printDebug("\(r.description)")
+            }
             resumeSpinner()
         }
-        if let r = response as? HTTPURLResponse {
-            pauseSpinner()
-            printDebug("HTTP response headers:")
-            printDebug("\(r.description)")
-            resumeSpinner()
-        }
+            
         guard let responseData = data else {
             spinner.fail(text: "Error: did not receive response data.")
             exit(1)
         }
         let response = String(data: responseData, encoding: .utf8)!
-        if !response.hasPrefix("[{\"coordinates\"")
+        if (debug)
         {
-            spinner.fail(text: "Error: did not receive coordinate data in response \(response).")
-            exit(1)
-        }
-        pauseSpinner()
-        printDebug("HTTP response: \(response).")
-        resumeSpinner()
-        if (response == "") {
-            spinner.fail(text: "Error: Empty response from server.")
-            exit(1)
+            pauseSpinner()
+            printDebug("HTTP response: \(response).")
+            resumeSpinner()
         }
         let jsonDecoder = JSONDecoder()
         do
         {
             results = try jsonDecoder.decode([VulnResult].self, from: responseData)
+            spinner.succeed(text: "Vulnerability data request complete.")
         }
         catch {
             spinner.fail(text: "Error decoding JSON response \(response): \(error).")
@@ -274,10 +268,14 @@ func printResults(results: [VulnResult])
         if (vulns.count > 0) {
             print ("Package: \(name)\nVersion: \(version)\nDescription: \(desc)")
             print("Vulnerable: YES".red())
-            for v in vulns {
-                if let cve = v.cve {
-                    print("CVE: \(cve)")
-                }
+            for i in 1...vulns.count {
+                let v = vulns[i - 1]
+                let cve = v.cve ?? "None"
+                let title = v.title ?? "None"
+                let desc = v.description ?? "None"
+                let cvssScore = v.cvssScore ?? 0.0
+                let cvssVector = v.cvssVector ?? "None"
+                print("  \(i). CVE: \(cve). Title: \(title). Desc: \(desc) CVSS: \(cvssScore) CVSS Vector: \(cvssVector)")
             }
         }
     }
@@ -330,7 +328,7 @@ func submitSBOM(coords: [String], sbom: String) {
             exit(1)
         }
         pauseSpinner()
-        printDebug("Response:\n \(responseData.debugDescription)")
+        printDebug("Response:\n \(responseData.debugDescription) \(String(data: responseData, encoding: .utf8)!)")
         resumeSpinner()
         let jsonDecoder = JSONDecoder()
         do
@@ -345,6 +343,11 @@ func submitSBOM(coords: [String], sbom: String) {
     appidtask.resume()
     if semaphore.wait(timeout: .now() + 15) == .timedOut {
         spinner.stop(text: "HTTP request timed out.")
+        exit(1)
+    }
+    if (app!.applications!.count == 0) {
+        spinner.stop(text: "Invalid IQ Server applicaion id: \(iqServerAppId!).")
+        printError("Could not submit SBOM to IQ Server.")
         exit(1)
     }
     let internalAppId = app!.applications![0].id!
@@ -564,19 +567,61 @@ for f in lockFiles {
                 printDebug(c);
             }
         }
+        for (_, purl) in _coords.enumerated() {
+            let c = getResultFromCache(purl: purl)
+            if let r = c {
+                cached.append(r)
+                printDebug("Using cached entry for \(purl).")
+            }
+            else {
+                coords.append(purl)
+            }
+        }
+        print ("\(cached.count) cached package(s).")
+        let results = getVulnDataFromApi(coords: coords)
+        printResults(results: results + cached)
+        for r in results {
+            addResultToCache(purl: r.coordinates!, result: r)
+        }
         if (iqServerUrl != nil) {
+            let uuid = UUID().uuidString.lowercased()
             var xml:String = 
             """
             <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-            <bom xmlns="http://cyclonedx.org/schema/bom/1.1" version="1" serialNumber="urn:uuid:d0a742e2-760d-47fb-a8e8-33bf37f6f105">
+            <bom xmlns="http://cyclonedx.org/schema/bom/1.1" version="1" serialNumber="urn:uuid:\(uuid)" xmlns:v="http://cyclonedx.org/schema/ext/vulnerability/1.0">
                 <components>\n
             """
-            for pin in p.object!.pins!
-            {
+            for result in results + cached {
+                let pkg = result.coordinates!.components(separatedBy: "/").last!.components(separatedBy: "@")  
+                let name = pkg[0]
+                let version = pkg[1]
+            
+                let vulns = result.vulnerabilities!
                 xml += "        <component type =\"library\">\n"
-                xml += "            <name>\(pin.package!)</name>\n"
-                xml += "            <version>\(pin.state!.version!)</version>\n"
-                xml += "            <purl>pkg:swift/\(pin.package!)@\(pin.state!.version!)</purl>\n"
+                xml += "            <name>\(name)</name>\n"
+                xml += "            <version>\(version)</version>\n"
+                xml += "            <purl>\(result.coordinates!)</purl>\n"
+                    
+                if (vulns.count > 0) {
+                    xml += "            <v:vulnerabilities>\n"
+                    for i in 1...vulns.count {
+                        let v = vulns[i - 1]
+                        let cve = v.cve ?? "None"
+                        /** Additional vuln details
+                        let title = v.title ?? "None"
+                        let desc = v.description ?? "None"
+                        let cvssScore = v.cvssScore ?? 0.0
+                        let cvssVector = v.cvssVector ?? "None"
+                        */
+                        if (cve == "None") {
+                            continue
+                        }
+                        xml += "            <v:vulnerability ref=\"\(result.coordinates!)\">\n"
+                        xml += "                <v:id>\(cve)</v:id>\n"
+                        xml += "            </v:vulnerability>\n" 
+                    }
+                    xml += "            </v:vulnerabilities>\n"
+                }
                 xml += "        </component>\n"
             }
             xml += "    </components>\n"
@@ -585,27 +630,8 @@ for f in lockFiles {
                 printDebug("Software BOM:\n\(xml)")
             } 
             submitSBOM(coords:_coords, sbom:xml)
-            exit(0)
         }
-        else {
-            for (_, purl) in _coords.enumerated() {
-                let c = getResultFromCache(purl: purl)
-                if let r = c {
-                    cached.append(r)
-                    printDebug("Using cached entry for \(purl).")
-                }
-                else {
-                    coords.append(purl)
-                }
-            }
-            print ("\(cached.count) cached package(s).")
-            let results = getVulnDataFromApi(coords: coords)
-            printResults(results: results + cached)
-            for r in results {
-                addResultToCache(purl: r.coordinates!, result: r)
-            }
-            exit(0)
-        }
+        exit(0)
     }
     else {
         printError("speedbump doesn't currently support package manager file \(f).")
